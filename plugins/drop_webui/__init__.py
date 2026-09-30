@@ -29,7 +29,7 @@ def init(app, context):
     from .routes import create_blueprint
     from .service import DropService
 
-    svc = DropService(context.get("cameras", {}), os.path.join(repo, "data"))
+    svc = DropService(context.get("cameras", {}), os.path.join(repo, "data"), repo)
     app.register_blueprint(create_blueprint(svc))
     app.extensions["drop_rpi"] = svc
 

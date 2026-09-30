@@ -14,6 +14,105 @@
       {% include "drop/_views.html" %}
 
       <div class="row g-3 mt-1">
+        <div class="col-lg-5">
+          <div class="card h-100">
+            <div class="card-header d-flex">
+              <span class="me-auto">Image metadata</span>
+              <span class="small text-body-secondary" id="metaFrame"></span>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0 small drop-meta" id="imageMeta">
+                <thead><tr><th></th><th>IR</th><th>RED</th></tr></thead>
+                <tbody>
+                  <tr><td>Camera</td><td data-im="ir.model"></td><td data-im="red.model"></td></tr>
+                  <tr><td>Stream</td><td data-im="ir.stream"></td><td data-im="red.stream"></td></tr>
+                  <tr><td>Processed</td><td data-im="ir.size"></td><td data-im="red.size"></td></tr>
+                  <tr><td>Sensor crop</td><td data-im="ir.crop"></td><td data-im="red.crop"></td></tr>
+                  <tr><td>Exposure</td><td data-im="ir.ExposureTime"></td><td data-im="red.ExposureTime"></td></tr>
+                  <tr><td>Analogue gain</td><td data-im="ir.AnalogueGain"></td><td data-im="red.AnalogueGain"></td></tr>
+                  <tr><td>Digital gain</td><td data-im="ir.DigitalGain"></td><td data-im="red.DigitalGain"></td></tr>
+                  <tr><td>Colour gains</td><td data-im="ir.ColourGains"></td><td data-im="red.ColourGains"></td></tr>
+                  <tr><td>Colour temp.</td><td data-im="ir.ColourTemperature"></td><td data-im="red.ColourTemperature"></td></tr>
+                  <tr><td>Lux</td><td data-im="ir.Lux"></td><td data-im="red.Lux"></td></tr>
+                  <tr><td>Frame rate</td><td data-im="ir.FrameDuration"></td><td data-im="red.FrameDuration"></td></tr>
+                  <tr><td>Flip</td><td data-im="ir.flip"></td><td data-im="red.flip"></td></tr>
+                  <tr><td>Sync</td><td colspan="2" data-im="sync"></td></tr>
+                  <tr><td>Captured</td><td colspan="2" data-im="captured"></td></tr>
+                  <tr><td>Position</td><td colspan="2" data-im="position"></td></tr>
+                  <tr><td>GPS</td><td colspan="2" data-im="gps"></td></tr>
+                  <tr><td>Profile</td><td colspan="2" data-im="profile"></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="card h-100">
+            <div class="card-header d-flex align-items-center">
+              <span class="me-auto">Field weather <span class="small text-body-secondary" id="wxWhere"></span></span>
+              <span class="small text-body-secondary me-2" id="wxAge"></span>
+              <button class="btn btn-sm btn-outline-secondary me-1" id="wxUseEto" type="button" title="Use today's FAO-56 ET0 for the zone irrigation estimate">Use ET0</button>
+              <button class="btn btn-sm btn-outline-secondary me-1" type="button" data-bs-toggle="collapse" data-bs-target="#wxLocation" title="Set the location manually"><i class="bi bi-geo-alt"></i></button>
+              <button class="btn btn-sm btn-outline-secondary" id="wxRefresh" type="button" title="Re-read GPS and refetch the weather"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="collapse border-bottom" id="wxLocation">
+              <div class="p-2 row g-2 align-items-end small">
+                <div class="col-4"><label class="form-label mb-0">Latitude</label>
+                  <input type="number" class="form-control form-control-sm" id="wxLat" step="0.00001" min="-90" max="90"></div>
+                <div class="col-4"><label class="form-label mb-0">Longitude</label>
+                  <input type="number" class="form-control form-control-sm" id="wxLon" step="0.00001" min="-180" max="180"></div>
+                <div class="col-4"><label class="form-label mb-0">Elevation (m)</label>
+                  <input type="number" class="form-control form-control-sm" id="wxElev" step="1" placeholder="auto"></div>
+                <div class="col-12 d-flex align-items-center">
+                  <div class="form-check form-switch me-auto">
+                    <input class="form-check-input" type="checkbox" id="wxPrefer">
+                    <label class="form-check-label" for="wxPrefer">Use instead of GPS (otherwise only when there is no fix)</label></div>
+                  <button class="btn btn-sm btn-outline-danger me-1" id="wxClear" type="button">Clear</button>
+                  <button class="btn btn-sm btn-primary" id="wxSave" type="button">Save</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-body p-2 small" id="wxBody">
+              <div class="text-body-secondary" id="wxStatus">Waiting for a location…</div>
+              <div class="row g-2 d-none" id="wxData">
+                <div class="col-md-6">
+                  <table class="table table-sm mb-0 drop-meta">
+                    <tbody id="wxNow"></tbody>
+                  </table>
+                </div>
+                <div class="col-md-6">
+                  <table class="table table-sm mb-0 drop-meta">
+                    <tbody id="wxToday"></tbody>
+                  </table>
+                </div>
+                <div class="col-12">
+                  <table class="table table-sm mb-0 text-center">
+                    <thead><tr><th class="text-start">Soil</th><th>0–1 cm</th><th>1–3 cm</th><th>3–9 cm</th><th>9–27 cm</th><th>27–81 cm</th></tr></thead>
+                    <tbody>
+                      <tr><td class="text-start">Moisture m³/m³</td><td data-wx="sm.soil_moisture_0_to_1cm"></td><td data-wx="sm.soil_moisture_1_to_3cm"></td>
+                        <td data-wx="sm.soil_moisture_3_to_9cm"></td><td data-wx="sm.soil_moisture_9_to_27cm"></td><td data-wx="sm.soil_moisture_27_to_81cm"></td></tr>
+                    </tbody>
+                    <thead><tr><th class="text-start"></th><th>0 cm</th><th>6 cm</th><th>18 cm</th><th>54 cm</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td class="text-start">Temperature °C</td><td data-wx="st.soil_temperature_0cm"></td><td data-wx="st.soil_temperature_6cm"></td>
+                        <td data-wx="st.soil_temperature_18cm"></td><td data-wx="st.soil_temperature_54cm"></td><td></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="col-12">
+                  <table class="table table-sm mb-0 text-center">
+                    <thead><tr><th class="text-start">Water balance (Kc = 1)</th><th>ET0 mm</th><th>Rain mm</th><th>Deficit mm</th></tr></thead>
+                    <tbody id="wxBalance"></tbody>
+                  </table>
+                  <div class="form-text mt-1">Open-Meteo model data (≈ km grid), not measured in this field.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
         <div class="col-lg-7">
           <div class="card">
             <div class="card-header d-flex">
@@ -109,6 +208,9 @@
                 <div class="col-12 form-text mt-0">The mask is the 5 m strip used for the zone means. In config.py rows: <span id="maskPxConfig">–</span></div>
                 <div class="col-6"><label class="form-label small mb-0">ETo (mm/day)</label>
                   <input type="number" class="form-control form-control-sm" data-set="eto" step="0.1" min="0" max="20"></div>
+                <div class="col-6 d-flex align-items-end"><div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" data-set="eto_from_weather" id="setEtoWx">
+                  <label class="form-check-label small" for="setEtoWx">ETo from weather</label></div></div>
                 <div class="col-6"><label class="form-label small mb-0">Preview fps</label>
                   <input type="number" class="form-control form-control-sm" data-set="fps" step="0.5" min="0.5" max="10"></div>
                 <div class="col-6"><label class="form-label small mb-0">Processing width (px)</label>

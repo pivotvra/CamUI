@@ -13,3 +13,4 @@
 .drop-meta { table-layout: fixed; }
 .drop-meta td { overflow-wrap: anywhere; }
 .drop-meta th:first-child, .drop-meta td:first-child { white-space: nowrap; width: 6.5em; }
+#imageMeta th:first-child, #imageMeta td:first-child { width: 7.5em; }

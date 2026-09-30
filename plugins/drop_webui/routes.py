@@ -94,7 +94,12 @@ def create_blueprint(svc):
     @bp.route("/api/camera/metadata")
     def camera_metadata():
         f = svc.fresh()
-        return ok(ir=svc.metadata("ir"), red=svc.metadata("red"),
+        frame = None
+        if f:
+            frame = {"id": f["id"], "age_s": time.time() - f["t"], "captured": f["t"],
+                     "ir_size": list(f["ir_s"].shape[1::-1]), "red_size": list(f["red_s"].shape[1::-1]),
+                     "ir_crop": list(f["ir"].crop), "red_crop": list(f["red"].crop)}
+        return ok(ir=svc.metadata("ir"), red=svc.metadata("red"), frame=frame,
                   sync_ms=f["sync_ms"] if f else None, status=svc.status)
 
     @bp.route("/api/camera/control", methods=["POST"])
@@ -123,7 +128,13 @@ def create_blueprint(svc):
     @bp.route("/api/ndvi/settings", methods=["GET", "POST"])
     def ndvi_settings():
         if request.method == "POST":
-            svc.settings.update(body())
+            changed = svc.settings.update(body())
+            if changed.get("eto_from_weather"):
+                svc.env.start()
+                try:
+                    svc.apply_weather_eto()
+                except RuntimeError:
+                    pass   # applied by the worker once the weather arrives
         data = {k: v for k, v in svc.settings.data.items() if k != "camera_extras"}
         return ok(settings=data)
 
@@ -194,6 +205,33 @@ def create_blueprint(svc):
     @bp.route("/api/ndvi/snapshot", methods=["POST"])
     def snapshot():
         return ok(path=svc.snapshot())
+
+    # ------------------------------------------------------------------ field location + weather
+
+    @bp.route("/api/field")
+    def field_state():
+        return ok(**svc.env.state())
+
+    @bp.route("/api/field/refresh", methods=["POST"])
+    def field_refresh():
+        svc.env.refresh()
+        return ok()
+
+    @bp.route("/api/field/location", methods=["POST"])
+    def field_location():
+        b = body()
+        if b.get("clear"):
+            svc.env.set_manual(None, None)
+        else:
+            svc.env.set_manual(b.get("latitude"), b.get("longitude"), b.get("elevation"), b.get("prefer"))
+        return ok(**svc.env.state())
+
+    @bp.route("/api/field/use_eto", methods=["POST"])
+    def field_use_eto():
+        try:
+            return ok(eto=svc.apply_weather_eto())
+        except RuntimeError as exc:
+            return fail(exc, 409)
 
     # ------------------------------------------------------------------ calibration
 

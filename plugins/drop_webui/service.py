@@ -26,6 +26,7 @@ import frame_quality
 from irrigation import calculate_irrigation
 
 from . import camera_io, render
+from .field_env import FieldEnvironment
 
 IDLE_TIMEOUT_S = 10.0
 
@@ -45,6 +46,7 @@ DEFAULT_SETTINGS = {
     "mask_end": round(config.MASK_ROW_END / config.CAPTURE_HEIGHT, 4),
     "n_zones": getattr(config, "N_ZONES", 5),
     "eto": 5.0,                 # mm/day, for the irrigation estimate
+    "eto_from_weather": False,  # keep eto synced to today's Open-Meteo FAO-56 ET0
     "proc_width": 820,
     "fps": 3.0,
     "camera_extras": {},        # per camera number: controls CamUI profiles cannot store (ColourGains)
@@ -104,7 +106,7 @@ class Settings:
             if key in CHOICES:
                 if value not in CHOICES[key]:
                     raise ValueError(f"{key} must be one of {CHOICES[key]}")
-            elif key == "exclude_saturated":
+            elif isinstance(DEFAULT_SETTINGS[key], bool):
                 value = bool(value)
             else:
                 lo, hi = LIMITS[key]
@@ -132,7 +134,7 @@ class Settings:
 
 
 class DropService:
-    def __init__(self, cameras, data_dir):
+    def __init__(self, cameras, data_dir, repo=None):
         self.cameras = cameras
         self.data_dir = data_dir
         self.settings = Settings(os.path.join(data_dir, "webui_settings.json"))
@@ -150,6 +152,22 @@ class DropService:
         self.status = ""
         self.calib = None
         self._apply_camera_extras()
+        self.env = FieldEnvironment(repo or os.path.dirname(data_dir), data_dir, self._on_weather)
+        if self.settings["eto_from_weather"]:
+            self.env.start()
+
+    def _on_weather(self, summary):
+        et0 = (summary.get("today") or {}).get("et0_fao_evapotranspiration")
+        if self.settings["eto_from_weather"] and et0 is not None:
+            self.settings.update({"eto": round(float(et0), 2)})
+
+    def apply_weather_eto(self):
+        summary = self.env.state()["weather"]
+        et0 = ((summary or {}).get("today") or {}).get("et0_fao_evapotranspiration")
+        if et0 is None:
+            raise RuntimeError("no weather data yet")
+        self.settings.update({"eto": round(float(et0), 2)})
+        return self.settings["eto"]
 
     # ------------------------------------------------------------------ cameras
 
@@ -617,6 +635,8 @@ class DropService:
                 "red": {k: _num(v) for k, v in red.metadata.items() if k in METADATA_KEYS},
                 "orientation": "sensor (CamUI flips undone)", "profile": self.model("ndvi").name,
                 "settings": {k: v for k, v in self.settings.data.items() if k != "camera_extras"}}
+        env = self.env.state()
+        meta.update(location=env["location"], gps=env["gps"]["fix"], weather=env["weather"])
         with open(os.path.join(folder, f"{stem}.json"), "w") as f:
             json.dump(meta, f, indent=2)
         return os.path.join(folder, stem)

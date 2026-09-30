@@ -381,6 +381,7 @@ const Drop = (() => {
         if (el.type === "checkbox") el.checked = !!v;
         else el.value = el.dataset.scale ? +(v * el.dataset.scale).toFixed(2) : v;
       });
+      setRoot.querySelector('[data-set="eto"]').disabled = !!s.eto_from_weather;
     }
     async function loadSettings() {
       const r = await api("/drop/api/ndvi/settings");
@@ -406,6 +407,8 @@ const Drop = (() => {
       report(r, (x) => `Saved ${x.path}_ir.png / _red.png`);
     });
     loadSettings();
+    imageMetaPanel();
+    weatherPanel(loadSettings);
 
     poll(async () => {
       const r = await api("/drop/api/ndvi/stats");
@@ -443,6 +446,175 @@ const Drop = (() => {
       if (a && a.tiles >= 3 && a.confidence > 0.2 && a.shift > 3) warn.push(`Residual misalignment ${fmt(a.shift, 1)} px — try Auto offset or check the crop distance.`);
       $("qualityWarnings").innerHTML = warn.map((w) => `<li>${w}</li>`).join("");
     }, 1000);
+  }
+
+  // ------------------------------------------------------------------ image metadata panel
+  function imageMetaPanel() {
+    const root = $("imageMeta");
+    if (!root) return;
+    let cams = null;
+    let field = null;
+    const num = (x, d = 2) => (isNum(x) ? (Number.isInteger(x) ? String(x) : x.toFixed(d)) : "–");
+    const list = (x) => (Array.isArray(x) ? x.map((y) => num(y)).join(", ") : "–");
+    const age = (s) => (!isNum(s) ? "–" : s < 90 ? `${s.toFixed(0)} s ago` : s < 5400 ? `${(s / 60).toFixed(0)} min ago` : `${(s / 3600).toFixed(1)} h ago`);
+
+    async function loadCams() {
+      const r = await api("/drop/api/cameras");
+      if (r.ok) cams = r;
+    }
+    loadCams();
+
+    function value(key, r) {
+      const [role, k] = key.split(".");
+      const md = r[role] || {};
+      const cam = cams && cams[role];
+      const f = r.frame;
+      switch (k || key) {
+        case "model": return cam ? `#${cam.num} ${cam.model || ""}` : "–";
+        case "stream": return cam && cam.stream ? `${cam.stream.size[0]}×${cam.stream.size[1]} ${cam.stream.format}` : "–";
+        case "size": return f ? f[`${role}_size`].join("×") : "–";
+        case "crop": return f ? `${f[`${role}_crop`][2]}×${f[`${role}_crop`][3]} @ ${f[`${role}_crop`][0]},${f[`${role}_crop`][1]}` : "–";
+        case "ExposureTime": return isNum(md.ExposureTime) ? `${md.ExposureTime} µs (1/${Math.round(1e6 / md.ExposureTime)} s)` : "–";
+        case "AnalogueGain": case "DigitalGain": return num(md[k]);
+        case "ColourGains": return list(md.ColourGains);
+        case "ColourTemperature": return isNum(md.ColourTemperature) ? `${md.ColourTemperature} K` : "–";
+        case "Lux": return num(md.Lux, 0);
+        case "FrameDuration": return isNum(md.FrameDuration) ? `${(1e6 / md.FrameDuration).toFixed(1)} fps (${(md.FrameDuration / 1000).toFixed(1)} ms)` : "–";
+        case "flip": return cam ? [cam.hflip && "H", cam.vflip && "V"].filter(Boolean).join(" + ") || "none" : "–";
+        case "sync": return isNum(r.sync_ms) ? `${fmt(r.sync_ms, 1)} ms between IR and RED` : "–";
+        case "captured": return f ? `${new Date(f.captured * 1000).toLocaleString()} (${age(f.age_s)})` : "–";
+        case "position": {
+          const l = field && field.location;
+          if (!l) return "no fix";
+          const alt = isNum(l.elevation) ? ` · ${l.elevation.toFixed(0)} m` : "";
+          return `${l.latitude.toFixed(6)}, ${l.longitude.toFixed(6)}${alt} (${l.source})`;
+        }
+        case "gps": {
+          const g = field && field.gps;
+          if (!g) return "–";
+          if (!g.available) return g.error || "not available";
+          const fx = g.fix;
+          const parts = fx ? [`fix ${fx.fix_quality ?? "ok"}`, isNum(fx.satellites) && `${fx.satellites} sats`,
+            isNum(fx.hdop) && `HDOP ${fx.hdop}`, fx.utc_time && `UTC ${fx.utc_time}`, age(g.age_s)].filter(Boolean) : ["no fix"];
+          if (g.error) parts.push(`last read: ${g.error}`);
+          return parts.join(" · ");
+        }
+        case "profile": return (field && field.profile) || "–";
+      }
+      return "–";
+    }
+
+    poll(async () => {
+      const r = await api("/drop/api/camera/metadata");
+      if (!r.ok) return;
+      $("metaFrame").textContent = r.frame ? `frame #${r.frame.id}` : "";
+      root.querySelectorAll("[data-im]").forEach((td) => { td.textContent = value(td.dataset.im, r); });
+    }, 1500);
+    poll(async () => {
+      const [f, m] = await Promise.all([api("/drop/api/field"), api("/drop/api/model?model=ndvi")]);
+      if (f.ok) field = f;
+      if (field && m.ok) field.profile = m.model.name ? `${m.model.name} (${m.model.kind})` : "none";
+    }, 5000);
+  }
+
+  // ------------------------------------------------------------------ weather panel
+  function weatherPanel(onEto) {
+    if (!$("wxBody")) return;
+    let filledLocation = false;
+    const n = (v, d = 1, unit = "") => (isNum(v) ? `${v.toFixed(d)}${unit}` : "–");
+    const hrs = (s) => (isNum(s) ? `${(s / 3600).toFixed(1)} h` : "–");
+    const time = (t) => (t ? t.slice(11, 16) : "–");
+    const compass = (deg) => (isNum(deg) ? ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8] : "");
+    const rows = (items) => items.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+
+    function render(st) {
+      const w = st.weather;
+      const l = st.location;
+      $("wxWhere").textContent = l ? `· ${l.latitude.toFixed(4)}, ${l.longitude.toFixed(4)} (${l.source})` : "";
+      $("wxAge").textContent = isNum(st.weather_age_s) ? `updated ${Math.round(st.weather_age_s / 60)} min ago` : "";
+      if (!filledLocation && st.manual) {
+        filledLocation = true;
+        $("wxLat").value = st.manual.latitude;
+        $("wxLon").value = st.manual.longitude;
+        $("wxElev").value = st.manual.elevation ?? "";
+        $("wxPrefer").checked = !!st.manual.prefer;
+      }
+      const status = [];
+      if (!l) status.push(st.gps.error ? `No GPS fix (${st.gps.error}). Set the location manually with the pin button.` : "Waiting for a GPS fix…");
+      if (st.weather_error) status.push(`Weather: ${st.weather_error}`);
+      if (l && !w && !st.weather_error) status.push("Fetching weather…");
+      $("wxStatus").textContent = status.join(" ");
+      $("wxStatus").classList.toggle("d-none", !status.length);
+      $("wxData").classList.toggle("d-none", !w);
+      if (!w) return;
+
+      const c = w.current, h = w.hourly_now || {}, d = w.today, x = w.next_24h || {};
+      $("wxNow").innerHTML = `<tr><th colspan="2">Now · ${time(w.time)}</th></tr>` + rows([
+        ["Air", `${n(c.temperature_2m, 1, " °C")} · RH ${n(c.relative_humidity_2m, 0, "%")} · dew ${n(c.dew_point_2m, 1, " °C")}`],
+        ["VPD", n(c.vapour_pressure_deficit, 2, " kPa")],
+        ["Wind", `${n(c.wind_speed_10m, 1, " m/s")} ${compass(c.wind_direction_10m)} · gusts ${n(c.wind_gusts_10m, 1, " m/s")}`],
+        ["Radiation", `${n(c.shortwave_radiation, 0, " W/m²")} (direct ${n(c.direct_radiation, 0)}, diffuse ${n(c.diffuse_radiation, 0)})`],
+        ["UV index", `${n(c.uv_index, 1)} (clear sky ${n(h.uv_index_clear_sky, 1)})`],
+        ["Clouds", `${n(c.cloud_cover, 0, "%")} (low ${n(h.cloud_cover_low, 0, "%")})`],
+        ["ET0 / ET", `${n(c.et0_fao_evapotranspiration, 2, " mm")} / ${n(c.evapotranspiration, 2, " mm")} per 15 min`],
+        ["Rain", `${n(c.precipitation, 1, " mm")} · chance ${n(h.precipitation_probability, 0, "%")}`],
+        ["Leaf wetness", n(h.leaf_wetness_probability, 0, "%")],
+        ["Pressure", n(c.surface_pressure, 0, " hPa")],
+      ]);
+      $("wxToday").innerHTML = `<tr><th colspan="2">Today</th></tr>` + rows([
+        ["ET0 (FAO-56)", `<b>${n(d.et0_fao_evapotranspiration, 2, " mm")}</b>`],
+        ["Temperature", `${n(d.temperature_2m_min, 1)} – ${n(d.temperature_2m_max, 1, " °C")}`],
+        ["Rain", `${n(d.precipitation_sum, 1, " mm")} in ${n(d.precipitation_hours, 0, " h")} · max chance ${n(d.precipitation_probability_max, 0, "%")}`],
+        ["Radiation", n(d.shortwave_radiation_sum, 1, " MJ/m²")],
+        ["UV max", `${n(d.uv_index_max, 1)} (clear sky ${n(d.uv_index_clear_sky_max, 1)})`],
+        ["Sunshine", `${hrs(d.sunshine_duration)} of ${hrs(d.daylight_duration)}`],
+        ["Sun", `${time(d.sunrise)} – ${time(d.sunset)}`],
+        ["Wind max", `${n(d.wind_speed_10m_max, 1, " m/s")} ${compass(d.wind_direction_10m_dominant)} · gusts ${n(d.wind_gusts_10m_max, 1, " m/s")}`],
+        ["Next 24 h", `ET0 ${n(x.et0_mm, 1, " mm")} · rain ${n(x.precip_mm, 1, " mm")} (max ${n(x.precip_probability_max, 0, "%")})`],
+      ]);
+      document.querySelectorAll("[data-wx]").forEach((td) => {
+        const [grp, k] = td.dataset.wx.split(".");
+        const v = (grp === "sm" ? w.soil_moisture_m3m3 : w.soil_temperature_c)[k];
+        td.textContent = n(v, grp === "sm" ? 3 : 1);
+      });
+      const b = w.water_balance;
+      const line = (label, t) => `<tr><td class="text-start">${label}</td><td>${n(t.etc_mm, 1)}</td><td>${n(t.precip_mm, 1)}</td>` +
+        `<td class="${t.deficit_mm > 0 ? "text-danger" : "text-success"}"><b>${n(t.deficit_mm, 1)}</b></td></tr>`;
+      $("wxBalance").innerHTML = line(`Last ${b.past.days} days`, b.past) + line(`Next ${b.forecast.days} days`, b.forecast);
+    }
+
+    const load = async () => {
+      const r = await api("/drop/api/field");
+      if (r.ok) render(r);
+      onEto();   // the worker may have synced ETo from the weather
+    };
+    $("wxRefresh").addEventListener("click", async () => {
+      report(await api("/drop/api/field/refresh", {}), "Refreshing location and weather…");
+      setTimeout(load, 3000);
+    });
+    $("wxUseEto").addEventListener("click", async () => {
+      const r = await api("/drop/api/field/use_eto", {});
+      report(r, (x) => `ETo set to ${fmt(x.eto, 2)} mm/day`);
+      if (r.ok) onEto();
+    });
+    $("wxSave").addEventListener("click", async () => {
+      const lat = $("wxLat").value, lon = $("wxLon").value;
+      if (lat === "" || lon === "") return toast("Enter latitude and longitude", "danger");
+      const r = await api("/drop/api/field/location", {
+        latitude: +lat, longitude: +lon, elevation: $("wxElev").value === "" ? null : +$("wxElev").value,
+        prefer: $("wxPrefer").checked,
+      });
+      report(r, "Location saved — fetching weather…");
+      if (r.ok) { render(r); setTimeout(load, 3000); }
+    });
+    $("wxClear").addEventListener("click", async () => {
+      const r = await api("/drop/api/field/location", { clear: true });
+      report(r, "Manual location cleared");
+      ["wxLat", "wxLon", "wxElev"].forEach((id) => { $(id).value = ""; });
+      $("wxPrefer").checked = false;
+      if (r.ok) render(r);
+    });
+    poll(load, 10000);
   }
 
   // ------------------------------------------------------------------ calibration page
