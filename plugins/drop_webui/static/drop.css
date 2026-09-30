@@ -1,0 +1,15 @@
+.drop-view { position: relative; background: #111; border-radius: .375rem; overflow: hidden; cursor: zoom-in; min-height: 120px; }
+.drop-view img.drop-img { width: 100%; display: block; }
+.drop-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.drop-tag { position: absolute; left: .4rem; top: .4rem; background: rgba(0,0,0,.55); color: #fff; padding: .1rem .4rem; border-radius: .25rem; font-size: .8rem; }
+.drop-badge { position: absolute; right: .4rem; top: .4rem; font-size: .8rem; }
+.drop-view:fullscreen { cursor: zoom-out; background: #000; display: flex; align-items: center; justify-content: center; }
+.drop-view:fullscreen img.drop-img { width: 100%; height: 100%; object-fit: contain; }
+.drop-view:-webkit-full-screen { cursor: zoom-out; background: #000; width: 100%; height: 100%; }
+.drop-view:-webkit-full-screen img.drop-img { width: 100%; height: 100%; object-fit: contain; }
+.drop-num { max-width: 6.5rem; }
+.drop-pair { width: 244px; }
+.drop-pair img { width: 100%; display: block; border-radius: .25rem; }
+.drop-meta { table-layout: fixed; }
+.drop-meta td { overflow-wrap: anywhere; }
+.drop-meta th:first-child, .drop-meta td:first-child { white-space: nowrap; width: 6.5em; }

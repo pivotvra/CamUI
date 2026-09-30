@@ -1,0 +1,71 @@
+{# Camera controls for the IR/RED pair #}
+<div id="cameraPanel">
+  <div class="btn-group btn-group-sm w-100 mb-2" role="group">
+    <input type="radio" class="btn-check" name="camRole" id="camRoleBoth" value="both" checked>
+    <label class="btn btn-outline-primary" for="camRoleBoth">Both (linked)</label>
+    <input type="radio" class="btn-check" name="camRole" id="camRoleIr" value="ir">
+    <label class="btn btn-outline-primary" for="camRoleIr">IR</label>
+    <input type="radio" class="btn-check" name="camRole" id="camRoleRed" value="red">
+    <label class="btn btn-outline-primary" for="camRoleRed">RED</label>
+  </div>
+
+  <div class="form-check form-switch">
+    <input class="form-check-input" type="checkbox" id="ctlAeEnable" data-ctl="AeEnable">
+    <label class="form-check-label" for="ctlAeEnable">Auto exposure</label>
+  </div>
+  <label class="form-label small mb-0 mt-2" for="ctlExposureTime">Exposure time (µs)</label>
+  <div class="d-flex gap-2 align-items-center">
+    <input type="range" class="form-range" id="ctlExposureSlider" min="0" max="1000">
+    <input type="number" class="form-control form-control-sm drop-num" id="ctlExposureTime" data-ctl="ExposureTime" step="1">
+  </div>
+  <label class="form-label small mb-0" for="ctlAnalogueGain">Analogue gain</label>
+  <div class="d-flex gap-2 align-items-center">
+    <input type="range" class="form-range" id="ctlGainSlider" min="1" max="16" step="0.1">
+    <input type="number" class="form-control form-control-sm drop-num" id="ctlAnalogueGain" data-ctl="AnalogueGain" step="0.1">
+  </div>
+  <label class="form-label small mb-0" for="ctlExposureValue">Exposure compensation (EV, auto exposure only)</label>
+  <div class="d-flex gap-2 align-items-center">
+    <input type="range" class="form-range" id="ctlEvSlider" min="-4" max="4" step="0.25">
+    <input type="number" class="form-control form-control-sm drop-num" id="ctlExposureValue" data-ctl="ExposureValue" step="0.25">
+  </div>
+
+  <div class="form-check form-switch mt-2">
+    <input class="form-check-input" type="checkbox" id="ctlAwbEnable" data-ctl="AwbEnable">
+    <label class="form-check-label" for="ctlAwbEnable">Auto white balance</label>
+  </div>
+  <div class="d-flex gap-2 align-items-center small">
+    <span class="text-nowrap">Gains R</span><input type="number" class="form-control form-control-sm drop-num" id="ctlGainR" step="0.05" min="0" max="32">
+    <span>B</span><input type="number" class="form-control form-control-sm drop-num" id="ctlGainB" step="0.05" min="0" max="32">
+    <button class="btn btn-sm btn-outline-secondary" id="ctlGainsApply" type="button">Set</button>
+  </div>
+  <div class="form-text">Fixed gains (AWB off) keep the band ratio stable between frames.</div>
+
+  <label class="form-label small mb-0 mt-2" for="ctlSensorMode">Sensor mode</label>
+  <select class="form-select form-select-sm" id="ctlSensorMode"></select>
+  <div class="form-text">Use the same mode on both cameras. Changing it restarts the stream.</div>
+
+  <div class="d-flex flex-wrap gap-2 mt-3">
+    <button class="btn btn-sm btn-primary" id="btnLockExposure" type="button" title="Switch AE off and keep the current exposure and gain">
+      <i class="bi bi-lock"></i> Lock current exposure</button>
+    <button class="btn btn-sm btn-outline-primary" id="btnCopyExposure" type="button" title="Use the IR exposure and gain on RED too">
+      Copy IR → RED</button>
+  </div>
+  <div class="input-group input-group-sm mt-2">
+    <input type="text" class="form-control" id="camProfileName" placeholder="CamUI profile name" value="drop">
+    <button class="btn btn-outline-secondary" id="btnSaveCamProfile" type="button" title="Saved as <name>_ir / <name>_red and loaded at CamUI start-up">Save as start-up profile</button>
+  </div>
+
+  <table class="table table-sm small mt-3 mb-0 drop-meta">
+    <thead><tr><th></th><th>IR</th><th>RED</th></tr></thead>
+    <tbody>
+      <tr><td>Exposure</td><td data-meta="ir.ExposureTime"></td><td data-meta="red.ExposureTime"></td></tr>
+      <tr><td>Gain</td><td data-meta="ir.AnalogueGain"></td><td data-meta="red.AnalogueGain"></td></tr>
+      <tr><td>Colour gains</td><td data-meta="ir.ColourGains"></td><td data-meta="red.ColourGains"></td></tr>
+      <tr><td>Lux</td><td data-meta="ir.Lux"></td><td data-meta="red.Lux"></td></tr>
+      <tr><td>Crop</td><td data-meta="ir.ScalerCrop"></td><td data-meta="red.ScalerCrop"></td></tr>
+      <tr><td>Stream</td><td data-meta="ir.stream"></td><td data-meta="red.stream"></td></tr>
+      <tr><td>Sync</td><td colspan="2" data-meta="sync_ms"></td></tr>
+    </tbody>
+  </table>
+  <div class="form-text">More controls: <a href="/camera_{{ ir_num }}">IR camera page</a> · <a href="/camera_{{ red_num }}">RED camera page</a></div>
+</div>

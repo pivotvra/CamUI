@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('drop.static', filename='drop.css') }}">
+<div class="mx-3">
+  <div class="d-flex align-items-center border-bottom mb-3 pb-2">
+    <h2 class="me-auto mb-0">NDVI</h2>
+    <span class="small text-body-secondary me-3" id="statusLine"></span>
+    <button class="btn btn-sm btn-outline-secondary" id="btnSnapshot" type="button" title="Save the current IR/RED pair (PNG) to data/snapshots">
+      <i class="bi bi-camera"></i> Snapshot pair</button>
+  </div>
+  <div class="row">
+    <div class="col-xl-9">
+      {% set model = 'ndvi' %}{% set default_view = 'ndvi' %}
+      {% include "drop/_views.html" %}
+
+      <div class="row g-3 mt-1">
+        <div class="col-lg-7">
+          <div class="card">
+            <div class="card-header d-flex">
+              <span class="me-auto">Zones (mask rows <span id="maskPx">–</span>)</span>
+              <span class="small">Mean NDVI <b id="meanNdvi">–</b> · vegetation <b id="vegFrac">–</b> · valid <b id="validFrac">–</b></span>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0 small text-center">
+                <thead><tr><th>Zone</th><th>NDVI</th><th>Veg. cover</th><th>Valid px</th><th>fc</th><th>Kc</th><th>ETc mm/d</th><th>Gross irrigation mm</th></tr></thead>
+                <tbody id="zoneRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="card">
+            <div class="card-header">Frame quality</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0 small">
+                <thead><tr><th></th><th>IR</th><th>RED</th></tr></thead>
+                <tbody>
+                  <tr><td>Mean level</td><td data-q="ir.mean"></td><td data-q="red.mean"></td></tr>
+                  <tr><td>Saturated</td><td data-q="ir.saturated"></td><td data-q="red.saturated"></td></tr>
+                  <tr><td>Sharpness</td><td data-q="ir.sharpness"></td><td data-q="red.sharpness"></td></tr>
+                  <tr><td>Residual shift</td><td colspan="2" data-q="alignment"></td></tr>
+                  <tr><td>Capture sync</td><td colspan="2" data-q="sync"></td></tr>
+                </tbody>
+              </table>
+              <ul class="small mb-2 mt-2 text-warning-emphasis" id="qualityWarnings"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-3 mt-3 mt-xl-0">
+      <div class="accordion" id="ndviSide">
+        <div class="accordion-item">
+          <h2 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#secProfile">Calibration profile &amp; alignment</button></h2>
+          <div id="secProfile" class="accordion-collapse collapse show">
+            <div class="accordion-body">
+              <div class="input-group input-group-sm mb-1">
+                <select class="form-select" id="profileSelect"></select>
+                <button class="btn btn-primary" id="profileLoad" type="button">Load</button>
+              </div>
+              <div class="form-text mb-2" id="profileInfo"></div>
+              <hr class="my-2">
+              {% set model = 'ndvi' %}
+              {% include "drop/_tuning.html" %}
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#secCamera">Camera controls</button></h2>
+          <div id="secCamera" class="accordion-collapse collapse">
+            <div class="accordion-body">{% include "drop/_camera_panel.html" %}</div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#secNdvi">NDVI settings</button></h2>
+          <div id="secNdvi" class="accordion-collapse collapse">
+            <div class="accordion-body" id="ndviSettings">
+              <div class="row g-2">
+                <div class="col-6"><label class="form-label small mb-0">IR band</label>
+                  <select class="form-select form-select-sm" data-set="ir_band">
+                    <option value="gray">Grey (all channels)</option><option value="r">R channel</option><option value="g">G channel</option><option value="b">B channel</option></select></div>
+                <div class="col-6"><label class="form-label small mb-0">RED band</label>
+                  <select class="form-select form-select-sm" data-set="red_band">
+                    <option value="r">R channel</option><option value="g">G channel</option><option value="b">B channel</option><option value="gray">Grey</option></select></div>
+                <div class="col-12"><label class="form-label small mb-0">RED gain (band balance)</label>
+                  <div class="input-group input-group-sm">
+                    <input type="number" class="form-control" data-set="red_gain" step="0.01" min="0.05" max="20">
+                    <button class="btn btn-outline-secondary" id="btnPanelGain" type="button" title="Place a grey card / reference panel in the centre of the view (≈20% of the image)">From grey panel</button>
+                  </div>
+                  <div class="form-text">RED is multiplied by this before NDVI. With a grey (spectrally flat) panel in the centre, “From grey panel” sets it so the panel reads NDVI 0.</div></div>
+                <div class="col-6"><label class="form-label small mb-0">Smoothing σ (px)</label>
+                  <input type="number" class="form-control form-control-sm" data-set="blur_sigma" step="0.5" min="0" max="10"></div>
+                <div class="col-6 d-flex align-items-end"><div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" data-set="exclude_saturated" id="setSat">
+                  <label class="form-check-label small" for="setSat">Ignore saturated px</label></div></div>
+                <div class="col-6"><label class="form-label small mb-0">Colour scale min</label>
+                  <input type="number" class="form-control form-control-sm" data-set="ndvi_min" step="0.05" min="-1" max="1"></div>
+                <div class="col-6"><label class="form-label small mb-0">Colour scale max</label>
+                  <input type="number" class="form-control form-control-sm" data-set="ndvi_max" step="0.05" min="-1" max="1"></div>
+                <div class="col-6"><label class="form-label small mb-0">Vegetation threshold</label>
+                  <input type="number" class="form-control form-control-sm" data-set="veg_threshold" step="0.01" min="-1" max="1"></div>
+                <div class="col-6"><label class="form-label small mb-0">Zones</label>
+                  <input type="number" class="form-control form-control-sm" data-set="n_zones" step="1" min="1" max="20"></div>
+                <div class="col-6"><label class="form-label small mb-0">Mask top (% of height)</label>
+                  <input type="number" class="form-control form-control-sm" data-set="mask_start" data-scale="100" step="0.5" min="0" max="100"></div>
+                <div class="col-6"><label class="form-label small mb-0">Mask bottom (%)</label>
+                  <input type="number" class="form-control form-control-sm" data-set="mask_end" data-scale="100" step="0.5" min="0" max="100"></div>
+                <div class="col-12 form-text mt-0">The mask is the 5 m strip used for the zone means. In config.py rows: <span id="maskPxConfig">–</span></div>
+                <div class="col-6"><label class="form-label small mb-0">ETo (mm/day)</label>
+                  <input type="number" class="form-control form-control-sm" data-set="eto" step="0.1" min="0" max="20"></div>
+                <div class="col-6"><label class="form-label small mb-0">Preview fps</label>
+                  <input type="number" class="form-control form-control-sm" data-set="fps" step="0.5" min="0.5" max="10"></div>
+                <div class="col-6"><label class="form-label small mb-0">Processing width (px)</label>
+                  <input type="number" class="form-control form-control-sm" data-set="proc_width" step="10" min="320" max="1640"></div>
+                <div class="col-3"><label class="form-label small mb-0">IR cam</label>
+                  <input type="number" class="form-control form-control-sm" data-set="ir_cam" step="1" min="0" max="7"></div>
+                <div class="col-3"><label class="form-label small mb-0">RED cam</label>
+                  <input type="number" class="form-control form-control-sm" data-set="red_cam" step="1" min="0" max="7"></div>
+                <div class="col-12 form-text mt-0">Camera numbers need a page reload. Settings are stored in data/webui_settings.json.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="dropToasts" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+<script src="{{ url_for('drop.static', filename='drop.js') }}"></script>
+<script>document.addEventListener("DOMContentLoaded", () => Drop.ndviPage());</script>
+{% endblock %}

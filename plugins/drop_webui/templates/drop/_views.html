@@ -1,0 +1,32 @@
+{# Three live views: IR stream, RED stream, processed view. model = 'ndvi' | 'calib' #}
+<div class="row g-2 drop-views">
+  <div class="col-md-4">
+    <div class="drop-view" data-role="ir" title="Click for fullscreen">
+      <img src="/video_feed_{{ ir_num }}" alt="IR camera" class="drop-img">
+      <canvas class="drop-canvas" data-role="ir"></canvas>
+      <span class="drop-tag">IR · cam {{ ir_num }}</span>
+      <span class="drop-badge" data-badge="ir"></span>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="drop-view" data-role="red" title="Click for fullscreen">
+      <img src="/video_feed_{{ red_num }}" alt="RED camera" class="drop-img">
+      <canvas class="drop-canvas" data-role="red"></canvas>
+      <span class="drop-tag">RED · cam {{ red_num }}</span>
+      <span class="drop-badge" data-badge="red"></span>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="drop-view" data-role="proc" title="Click for fullscreen">
+      <img id="procView" src="/drop/stream/{{ default_view }}?model={{ model }}" alt="Processed view" class="drop-img"
+           data-model="{{ model }}">
+      <span class="drop-tag">
+        <select id="procViewSelect" class="form-select form-select-sm d-inline-block w-auto drop-noclick">
+          {% for key, label in views.items() %}
+          <option value="{{ key }}" {% if key == default_view %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </span>
+    </div>
+  </div>
+</div>

@@ -47,10 +47,12 @@ def print_section(title):
     print(f"\n{'=' * 10} {title} {'=' * 10}")
 
 # Plugin loader function
-def load_plugins(app, context=None, plugins_folder='plugins'):
+def load_plugins(app, context=None, plugins_folder=None):
+    if plugins_folder is None:
+        plugins_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plugins')
     if not os.path.exists(plugins_folder):
         return
-    for filename in os.listdir(plugins_folder):
+    for filename in sorted(os.listdir(plugins_folder)):
         if filename.endswith('.py') and not filename.startswith('__'):
             plugin_path = os.path.join(plugins_folder, filename)
             spec = importlib.util.spec_from_file_location(filename[:-3], plugin_path)
@@ -686,6 +688,7 @@ class CameraObject:
                 main={"size": self.camera_resolutions[int(self.camera_profile['resolutions']['LiveFeedResolution'])]}, 
                 sensor={'output_size': mode['size'], 'bit_depth': mode['bit_depth']},
             )
+            self.set_orientation()
             
             # Configure the camera
             try:

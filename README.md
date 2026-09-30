@@ -54,6 +54,14 @@ As of September 2024 the Bookworm version of Raspberry Pi OS (Desktop) has the r
 - [flask](https://flask.palletsprojects.com/en/3.0.x/installation/#install-flask)
 - [Picamera2](https://github.com/raspberrypi/picamera2)
 
+### drop-rpi NDVI / Calibration plugin
+
+This fork ships a `drop_webui` plugin (`plugins/drop_rpi.py`) that adds NDVI
+and Calibration tabs. It additionally needs NumPy and OpenCV
+(`sudo apt install python3-numpy python3-opencv`) and the parent drop-rpi
+repository (found automatically, or set `DROP_RPI_DIR`). If these are missing
+the plugin is skipped and CamUI runs as usual.
+
 ### Installation
 
 1. Update Raspberry Pi OS: 

@@ -1,0 +1,43 @@
+{# Alignment tuning for model 'ndvi' (active profile) or 'calib' (unsaved calibration result) #}
+<div id="tuningPanel" data-model="{{ model }}">
+  <div class="small mb-2"><span class="text-body-secondary">Model:</span> <span id="tunDescribe">–</span></div>
+  <div class="row g-2 align-items-end" id="tunPlaneRow">
+    <div class="col-6">
+      <label class="form-label small mb-0" for="tunDistance">Crop distance (m)</label>
+      <input type="number" class="form-control form-control-sm" id="tunDistance" min="0.1" step="0.1">
+    </div>
+    <div class="col-6">
+      <label class="form-label small mb-0" for="tunPitch">Pitch below horizon (°)</label>
+      <input type="number" class="form-control form-control-sm" id="tunPitch" min="-89" max="89" step="1" placeholder="facing plane">
+    </div>
+    <div class="col-12 form-text mt-0">Stereo profiles only. Distance along the IR camera's viewing direction to the canopy. Leave pitch empty for a plane facing the camera; set it when the camera looks down at the ground.</div>
+  </div>
+  <label class="form-label small mb-0 mt-2">RED offset (sensor pixels)</label>
+  <div class="d-flex gap-1 align-items-center flex-wrap">
+    <span class="small">x</span>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="-10,0">«</button>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="-1,0">‹</button>
+    <input type="number" class="form-control form-control-sm drop-num" id="tunOffX" step="0.5">
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="1,0">›</button>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="10,0">»</button>
+  </div>
+  <div class="d-flex gap-1 align-items-center flex-wrap mt-1">
+    <span class="small">y</span>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="0,-10">«</button>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="0,-1">‹</button>
+    <input type="number" class="form-control form-control-sm drop-num" id="tunOffY" step="0.5">
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="0,1">›</button>
+    <button class="btn btn-sm btn-outline-secondary" data-nudge="0,10">»</button>
+  </div>
+  <div class="small mt-2">Residual shift: <span id="tunResidual">–</span></div>
+  <div class="d-flex flex-wrap gap-2 mt-2">
+    <button class="btn btn-sm btn-outline-primary" id="tunAuto" type="button" title="Measure the remaining shift on the live scene and add it to the offset">
+      <i class="bi bi-magic"></i> Auto offset</button>
+    {% if model == 'ndvi' %}
+    <button class="btn btn-sm btn-success" id="tunSave" type="button"><i class="bi bi-save"></i> Save to profile</button>
+    <button class="btn btn-sm btn-outline-secondary" id="tunRevert" type="button">Revert</button>
+    {% endif %}
+  </div>
+  <div class="form-text">Auto offset needs a textured scene at the crop distance (the crop itself works well).
+    Use the Overlay/Edges view: aligned edges look white/grey, misaligned ones show green and magenta fringes.</div>
+</div>

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('drop.static', filename='drop.css') }}">
+<div class="mx-3">
+  <div class="d-flex align-items-center border-bottom mb-3 pb-2">
+    <h2 class="me-auto mb-0">Calibration</h2>
+    <span class="small text-body-secondary" id="statusLine"></span>
+  </div>
+  <div class="row">
+    <div class="col-xl-8">
+      {% set model = 'calib' %}{% set default_view = 'edges' %}
+      {% include "drop/_views.html" %}
+      <div class="form-text">IR/RED: live checkerboard detection (green = found) and the outlines of captured pairs, so you can see which parts of the image are still uncovered.
+        Right: alignment with the unsaved result (or the active NDVI profile before you run a calibration).</div>
+
+      <div class="card mt-3 d-none" id="pairsCard">
+        <div class="card-header d-flex align-items-center">
+          <span class="me-auto">Captured pairs <b id="pairCount">0</b> / <span id="pairTarget"></span></span>
+          <div class="progress w-25" role="progressbar"><div class="progress-bar" id="pairProgress" style="width:0%"></div></div>
+        </div>
+        <div class="card-body">
+          <div class="d-flex flex-wrap gap-2" id="pairList"></div>
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header">Saved calibration profiles</div>
+        <div class="card-body p-0">
+          <table class="table table-sm small mb-0">
+            <thead><tr><th>Name</th><th>Type</th><th>Quality</th><th>RMS px</th><th>Pairs</th><th>Plane</th><th>Updated</th><th></th></tr></thead>
+            <tbody id="profileRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-4 mt-3 mt-xl-0">
+      <div class="accordion" id="calibSide">
+        <div class="accordion-item">
+          <h2 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#secWizard">Calibration wizard</button></h2>
+          <div id="secWizard" class="accordion-collapse collapse show">
+            <div class="accordion-body">
+
+              <!-- Step 1: new session -->
+              <div id="stepNew">
+                <h6>1 · New calibration</h6>
+                <form id="newForm" class="row g-2">
+                  <div class="col-12"><label class="form-label small mb-0">Name</label>
+                    <input class="form-control form-control-sm" name="name" required maxlength="64" placeholder="e.g. pivot1_2026-10" title="Letters, digits, _ . - (spaces become _)"></div>
+                  <div class="col-12"><label class="form-label small mb-0">Method</label>
+                    <select class="form-select form-select-sm" name="kind" id="kindSelect">
+                      <option value="stereo">Checkerboard stereo (recommended)</option>
+                      <option value="ecc">Quick: flat textured scene at crop distance (ECC)</option>
+                    </select></div>
+                  <div class="col-4 stereo-only"><label class="form-label small mb-0">Inner corners across</label>
+                    <input type="number" class="form-control form-control-sm" name="cols" value="8" min="3" max="40"></div>
+                  <div class="col-4 stereo-only"><label class="form-label small mb-0">Inner corners down</label>
+                    <input type="number" class="form-control form-control-sm" name="rows" value="6" min="3" max="40"></div>
+                  <div class="col-4 stereo-only"><label class="form-label small mb-0">Square (mm)</label>
+                    <input type="number" class="form-control form-control-sm" name="square_mm" value="28" step="0.1" min="1"></div>
+                  <div class="col-6"><label class="form-label small mb-0">Crop distance (m)</label>
+                    <input type="number" class="form-control form-control-sm" name="distance_m" value="5" step="0.1" min="0.1"></div>
+                  <div class="col-6 stereo-only"><label class="form-label small mb-0">Pitch below horizon (°)</label>
+                    <input type="number" class="form-control form-control-sm" name="pitch_deg" step="1" min="-89" max="89" placeholder="optional"></div>
+                  <div class="col-6 stereo-only"><label class="form-label small mb-0">Pairs to capture</label>
+                    <input type="number" class="form-control form-control-sm" name="target_pairs" value="15" min="{{ min_pairs }}" max="60"></div>
+                  <div class="col-6"><label class="form-label small mb-0">Capture from</label>
+                    <select class="form-select form-select-sm" name="source">
+                      <option value="still">Full-resolution still</option>
+                      <option value="stream">Live stream frame (fast)</option>
+                    </select></div>
+                  <div class="col-12"><label class="form-label small mb-0">Notes</label>
+                    <input class="form-control form-control-sm" name="notes" placeholder="board, lens focus, mounting…"></div>
+                  <div class="col-12"><button class="btn btn-primary btn-sm w-100" type="submit">Start calibration</button></div>
+                </form>
+                <details class="small mt-3" open>
+                  <summary class="fw-semibold">Instructions</summary>
+                  <div class="stereo-only">
+                    <ol class="ps-3 mt-2">
+                      <li><b>Board:</b> print a checkerboard with a <b>laser printer</b> (many inkjet inks are invisible at 820&nbsp;nm), glue it flat on a rigid, matte board. Count the <i>inner</i> corners (squares − 1) and measure one square with a ruler.</li>
+                      <li><b>Cameras:</b> focus both lenses for the working distance and don't touch them after calibrating. Put both cameras in the same sensor mode; don't change mode or flips during the session.</li>
+                      <li><b>Exposure:</b> open <i>Camera controls</i>, point at the board and press <i>Lock current exposure</i> so no pixels saturate (the board must be crisp: short exposures avoid motion blur).</li>
+                      <li><b>Capture</b> {{ recommended_pairs }}–20 pairs. The board should fill ¼–½ of the view and be seen by <b>both</b> cameras. Cover the centre, all four corners and the edges, tilt it ±30° in both directions and vary the distance. Hold it still while capturing (a full-resolution still takes 1–2&nbsp;s). Use <i>Auto capture</i> to capture whenever the board is still and in a new place.</li>
+                      <li><b>Run</b> the calibration. Aim for an RMS error below 0.5&nbsp;px; delete pairs with a large error and run again.</li>
+                      <li><b>Crop distance:</b> RED is mapped onto IR through a plane at this distance (along the IR camera's view). Set the pitch if the cameras look down at the ground. Both can be changed later in the NDVI tab.</li>
+                      <li><b>Check</b> the Overlay/Edges view on a real scene at the crop distance, fine-tune with <i>Auto offset</i>, then <b>save</b> the profile under a name and load it in the NDVI tab.</li>
+                    </ol>
+                  </div>
+                  <div class="ecc-only d-none">
+                    <ol class="ps-3 mt-2">
+                      <li>Point both cameras at a flat, sharp, well-textured scene at the crop distance (a building wall, a fence with posters, or the crop canopy seen from the working height).</li>
+                      <li>Lock the exposure (Camera controls) so nothing saturates.</li>
+                      <li>Capture one pair and run: the ECC homography is estimated from the last pair. Correlation above 0.9 is good.</li>
+                      <li>This only holds at that distance and does not model lens distortion. For a durable calibration use the checkerboard method.</li>
+                    </ol>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Steps 2–4: active session -->
+              <div id="stepSession" class="d-none">
+                <div class="d-flex align-items-center mb-2">
+                  <h6 class="me-auto mb-0">Session <span id="sessName"></span></h6>
+                  <button class="btn btn-sm btn-outline-danger" id="btnDiscard" type="button">Discard</button>
+                </div>
+                <div class="small text-body-secondary mb-2 text-break" id="sessInfo"></div>
+
+                <h6>2 · Capture</h6>
+                <div class="d-flex gap-2 align-items-center mb-2">
+                  <span class="badge" id="detIr">IR</span><span class="badge" id="detRed">RED</span>
+                  <span class="small text-body-secondary" id="detHint"></span>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                  <button class="btn btn-success" id="btnCapture" type="button"><i class="bi bi-camera"></i> Capture pair</button>
+                  <div class="form-check form-switch stereo-only">
+                    <input class="form-check-input" type="checkbox" id="autoCapture">
+                    <label class="form-check-label small" for="autoCapture">Auto capture</label>
+                  </div>
+                </div>
+                <div class="small mt-1" id="captureMsg"></div>
+
+                <h6 class="mt-3">3 · Run &amp; check</h6>
+                <button class="btn btn-primary btn-sm" id="btnRun" type="button"><i class="bi bi-cpu"></i> Run calibration</button>
+                <div id="resultBox" class="mt-2 d-none">
+                  <div class="mb-1"><span class="badge fs-6" id="resLevel"></span> <span class="small" id="resMain"></span></div>
+                  <ul class="small ps-3 mb-2" id="resMessages"></ul>
+                  <div class="border rounded p-2">
+                    <div class="small fw-semibold mb-1">Preview tuning (applies to the unsaved result)</div>
+                    {% set model = 'calib' %}
+                    {% include "drop/_tuning.html" %}
+                  </div>
+                </div>
+
+                <div id="saveBox" class="d-none">
+                  <h6 class="mt-3">4 · Save</h6>
+                  <div class="input-group input-group-sm">
+                    <input class="form-control" id="saveName" maxlength="64" title="Letters, digits, _ . - (spaces become _)">
+                    <button class="btn btn-success" id="btnSave" type="button"><i class="bi bi-save"></i> Save profile</button>
+                  </div>
+                  <div class="form-check small mt-1"><input class="form-check-input" type="checkbox" id="saveOverwrite"><label class="form-check-label" for="saveOverwrite">Overwrite if it exists</label></div>
+                  <div class="form-check small"><input class="form-check-input" type="checkbox" id="saveUse" checked><label class="form-check-label" for="saveUse">Use it in the NDVI tab</label></div>
+                  <div class="small mt-1" id="saveMsg"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#secCamera">Camera controls</button></h2>
+          <div id="secCamera" class="accordion-collapse collapse">
+            <div class="accordion-body">{% include "drop/_camera_panel.html" %}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="dropToasts" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+<script src="{{ url_for('drop.static', filename='drop.js') }}"></script>
+<script>document.addEventListener("DOMContentLoaded", () => Drop.calibrationPage({{ recommended_pairs }}));</script>
+{% endblock %}
