@@ -82,6 +82,17 @@ python app.py
 ```
 5. From your broswer, on a device connected to the same network, goto the following address: 'http://**Your IP**:8080/'
 
+### Performance options
+
+The live feed is limited to keep CPU and RAM usage low on the Pi:
+
+- `--max-fps 15` (env `CAMUI_MAX_FPS`): frame-rate cap of the live feed / video mode.
+- `--max-live-width 1640` (env `CAMUI_MAX_LIVE_WIDTH`): the live feed uses the largest available resolution not wider than this (`0` = no cap). Still captures always use the full still resolution.
+
+```bash
+python app.py --max-fps 10 --max-live-width 1280
+```
+
 ## Running as a service 
 
 - Run the following command and note down the location for python which python should look like "/usr/bin/python" `which python`

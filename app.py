@@ -30,6 +30,18 @@ plugin_hooks = {
     'after_image_capture': []  # List of callbacks: fn(camera_num, image_path)
 }
 
+# Live-feed performance limits. Parsed here because the cameras are created at import time.
+perf_parser = argparse.ArgumentParser(add_help=False)
+perf_parser.add_argument('--max-fps', type=float, default=float(os.environ.get('CAMUI_MAX_FPS', 15)),
+                         help='Frame-rate cap of the live feed (env CAMUI_MAX_FPS, default 15)')
+perf_parser.add_argument('--max-live-width', type=int, default=int(os.environ.get('CAMUI_MAX_LIVE_WIDTH', 1640)),
+                         help='Max live-feed width in px, 0 = no cap (env CAMUI_MAX_LIVE_WIDTH, default 1640)')
+perf_args, _ = perf_parser.parse_known_args()
+LIVE_MAX_FPS = max(0.5, perf_args.max_fps)
+LIVE_MAX_WIDTH = max(0, perf_args.max_live_width)
+VIDEO_BUFFER_COUNT = 4
+JPEG_ENCODER_THREADS = 2
+
 # AEC-AGC child controls that only take effect when AeEnable is active on hardware.
 AEC_CHILD_SETTINGS = {
     "ExposureValue",
@@ -263,7 +275,34 @@ class CameraObject:
         self.still_config = {}
         self.video_config = {}
         self.still_config = self.picam2.create_still_configuration()
-        self.video_config = self.picam2.create_video_configuration()
+        self.video_config = self.create_live_config()
+
+    def cap_live_size(self, size):
+        # Largest available resolution not wider than LIVE_MAX_WIDTH
+        if not LIVE_MAX_WIDTH or size is None or size[0] <= LIVE_MAX_WIDTH:
+            return size
+        fitting = [r for r in self.camera_resolutions if r[0] <= LIVE_MAX_WIDTH]
+        capped = max(fitting) if fitting else min(self.camera_resolutions)
+        capped = (capped[0] // 2 * 2, capped[1] // 2 * 2)
+        print(f"Live feed {size[0]}x{size[1]} capped to {capped[0]}x{capped[1]} (--max-live-width {LIVE_MAX_WIDTH})")
+        return capped
+
+    def create_live_config(self, size=None, sensor=None):
+        # Video (live feed) configuration with the resolution, fps and buffer limits applied
+        kwargs = {"buffer_count": VIDEO_BUFFER_COUNT}
+        size = self.cap_live_size(size)
+        if size is not None:
+            kwargs["main"] = {"size": size}
+        if sensor is not None:
+            kwargs["sensor"] = sensor
+        if "FrameDurationLimits" in self.picam2.camera_controls:
+            frame_us = int(1_000_000 / LIVE_MAX_FPS)
+            kwargs["controls"] = {"FrameDurationLimits": (frame_us, frame_us)}
+        return self.picam2.create_video_configuration(**kwargs)
+
+    def live_feed_size(self):
+        index = int(self.camera_profile.get('resolutions', {}).get('LiveFeedResolution', 0))
+        return self.camera_resolutions[index]
 
     # Update camera settings flip and resolution settings
     def update_camera_config_OLD(self):
@@ -683,11 +722,11 @@ class CameraObject:
             self.still_config = self.picam2.create_still_configuration(
                 sensor={'output_size': mode['size'], 'bit_depth': mode['bit_depth']}
             )
-            print(self.camera_resolutions[int(self.camera_profile['resolutions']['LiveFeedResolution'])])
-            self.video_config = self.picam2.create_video_configuration(
-                main={"size": self.camera_resolutions[int(self.camera_profile['resolutions']['LiveFeedResolution'])]}, 
+            self.video_config = self.create_live_config(
+                self.live_feed_size(),
                 sensor={'output_size': mode['size'], 'bit_depth': mode['bit_depth']},
             )
+            print(f"Live feed: {self.video_config['main']['size']} @ max {LIVE_MAX_FPS:g} fps")
             self.set_orientation()
             
             # Configure the camera
@@ -745,7 +784,7 @@ class CameraObject:
         print(f"Setting live feed resolution to: {resolution}")
 
         # Update video config
-        self.video_config = self.picam2.create_video_configuration(main={"size": resolution})
+        self.video_config = self.create_live_config(resolution)
         # Apply new configuration
         self.configure_video_config()
 
@@ -940,6 +979,8 @@ class CameraObject:
             try:
                 if self.use_placeholder:
                     frame = self.placeholder_frame
+                    # Don't spin: re-send the static placeholder a few times per second only
+                    time.sleep(0.25)
                 else:
                     with self.output.condition:
                         notified = self.output.condition.wait(timeout=5.0)
@@ -959,6 +1000,7 @@ class CameraObject:
                 if frame is None or not isinstance(frame, bytes):
                     print(f"⚠️ Invalid frame ({type(frame)}), using placeholder.")
                     frame = self.placeholder_frame
+                    time.sleep(0.1)
                     continue
 
                 # Safely get camera configuration
@@ -966,10 +1008,12 @@ class CameraObject:
                     config = self.picam2.camera_configuration()
                     if config is None:
                         frame = self.placeholder_frame
+                        time.sleep(0.1)
                         continue
                 except Exception as e:
                     print(f"⚠️ Error getting camera config: {e}")
                     frame = self.placeholder_frame
+                    time.sleep(0.1)
                     continue
 
                 # Check if we need to restart the stream
@@ -1023,7 +1067,11 @@ class CameraObject:
         if mode_index < 0 or mode_index >= len(self.sensor_modes):
             raise ValueError("Invalid sensor mode index")
         mode = self.sensor_modes[mode_index]
-        img = Image.new('RGB', mode['size'], (33, 37, 41))  # Match video feed size THIS NEEDS WORK FOR THE SCALER CROP
+        try:
+            size = tuple(self.video_config["main"]["size"])
+        except (KeyError, TypeError):
+            size = mode['size']
+        img = Image.new('RGB', size, (33, 37, 41))
         draw = ImageDraw.Draw(img)
         buf = io.BytesIO()
         img.save(buf, format='JPEG')
@@ -1031,7 +1079,7 @@ class CameraObject:
 
     def start_streaming(self):
         self.output = StreamingOutput()
-        self.picam2.start_recording(JpegEncoder(), output=FileOutput(self.output))
+        self.picam2.start_recording(JpegEncoder(num_threads=JPEG_ENCODER_THREADS), output=FileOutput(self.output))
         print_section("Streaming started")
         time.sleep(1)
 
@@ -1932,7 +1980,7 @@ def add_header(response):
 
 if __name__ == "__main__":
     # Parse any argument passed from command line
-    parser = argparse.ArgumentParser(description='PiCamera2 WebUI')
+    parser = argparse.ArgumentParser(description='PiCamera2 WebUI', parents=[perf_parser])
     parser.add_argument('--port', type=int, default=8080, help='Port number to run the web server on')
     parser.add_argument('--ip', type=str, default='0.0.0.0', help='IP to which the web server is bound to')
     args = parser.parse_args()
