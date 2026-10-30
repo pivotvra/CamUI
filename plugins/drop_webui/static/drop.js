@@ -339,6 +339,7 @@ const Drop = (() => {
   // ------------------------------------------------------------------ NDVI page
   function ndviPage() {
     initViews();
+    recordedPanel();
     cameraPanel();
     const tun = tuningPanel($("tuningPanel"));
     tun.load();
@@ -415,7 +416,13 @@ const Drop = (() => {
       if (!r.ok) return;
       $("statusLine").textContent = r.status || "";
       const s = r.stats;
-      if (!s) return;
+      if (!s) {
+        for (const id of ["meanNdvi", "vegFrac", "validFrac", "maskPx"]) $(id).textContent = "–";
+        $("zoneRows").replaceChildren();
+        document.querySelectorAll("[data-q]").forEach((el) => { el.textContent = "–"; });
+        $("qualityWarnings").replaceChildren();
+        return;
+      }
       $("meanNdvi").textContent = fmt(s.mean_ndvi, 3);
       $("vegFrac").textContent = pct(s.veg_fraction);
       $("validFrac").textContent = pct(s.valid_fraction);
@@ -448,6 +455,97 @@ const Drop = (() => {
     }, 1000);
   }
 
+  function recordedPanel() {
+    let state = null;
+    let pending = false;
+    function fill(s) {
+      const sourceChanged = !state || state.source !== s.source;
+      state = s;
+      const recorded = s.mode === "recorded";
+      const running = s.job.running || pending;
+      $("inputMode").value = s.mode;
+      if (s.source && sourceChanged) $("datasetSelect").value = s.source;
+      $("recordedControls").classList.toggle("d-none", !recorded);
+      $("inputMode").disabled = running;
+      $("datasetLoad").disabled = running || !$("datasetSelect").value;
+      $("datasetSelect").disabled = running;
+      $("datasetRefresh").disabled = running;
+      $("pairPrev").disabled = running || s.index <= 0;
+      $("pairNext").disabled = running || s.index >= s.total - 1;
+      $("pairIndex").disabled = running;
+      $("pairIndex").max = s.total;
+      setVal($("pairIndex"), s.index + 1);
+      $("pairTotal").textContent = `of ${s.total}`;
+      $("datasetEvaluate").disabled = running;
+      $("datasetExport").disabled = running || !s.evaluated || !s.good;
+      $("btnSnapshot").disabled = recorded;
+      document.querySelectorAll("#cameraPanel input, #cameraPanel select, #cameraPanel button, [data-set='ir_cam'], [data-set='red_cam']").forEach((el) => {
+        el.disabled = recorded;
+      });
+      document.querySelector("[data-set='proc_width']").disabled = recorded && running;
+      $("recordedPair").textContent = s.pair ?
+        `${s.pair.session} / ${s.pair.stem} — ${s.verdict || "not evaluated"}${s.reasons ? ": " + s.reasons : ""}` : "";
+      $("recordedJob").textContent = s.job.error ? `Failed: ${s.job.error}` :
+        s.job.running ? `Processing ${s.job.done} / ${s.job.total} pairs...` :
+        s.job.export ? `Export complete: ${s.job.export} (${s.good} good pairs). Report: report.csv` :
+        s.evaluated ? `${s.good} good, ${s.bad} bad. Originals are exported without re-encoding.` :
+        "Evaluate the dataset before exporting. Changing bands or calibration requires re-evaluation.";
+    }
+    async function sources() {
+      const r = await api("/drop/api/ndvi/datasets");
+      if (!r.ok) return report(r);
+      const sel = $("datasetSelect");
+      const previous = sel.value;
+      sel.replaceChildren();
+      for (const source of r.sources) {
+        const opt = document.createElement("option");
+        opt.value = source.path;
+        opt.textContent = source.path === "." ? "FieldData — all folders and ZIPs" : `${source.path} (${source.kind})`;
+        sel.appendChild(opt);
+      }
+      if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
+      if (!r.sources.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No folders or ZIP archives found in FieldData";
+        sel.appendChild(opt);
+      }
+      $("datasetLoad").disabled = !sel.value;
+    }
+    async function change(url, data) {
+      if (pending) return;
+      pending = true;
+      if (state) fill(state);
+      const r = await api(url, data);
+      pending = false;
+      report(r);
+      if (r.ok) fill(r.input);
+      else if (state) fill(state);
+    }
+    $("inputMode").addEventListener("change", () => {
+      if ($("inputMode").value === "live") change("/drop/api/ndvi/input", { mode: "live" });
+      else if ($("datasetSelect").value) change("/drop/api/ndvi/input", { mode: "recorded", source: $("datasetSelect").value });
+      else {
+        if (state) fill(state);
+        toast("Add a folder or ZIP archive under FieldData first", "warning");
+      }
+    });
+    $("datasetRefresh").addEventListener("click", sources);
+    $("datasetLoad").addEventListener("click", () => change("/drop/api/ndvi/input", {
+      mode: "recorded", source: $("datasetSelect").value,
+    }));
+    const browse = (index) => state && change("/drop/api/ndvi/input", { mode: "recorded", source: state.source, index });
+    $("pairPrev").addEventListener("click", () => browse(state.index - 1));
+    $("pairNext").addEventListener("click", () => browse(state.index + 1));
+    $("pairIndex").addEventListener("change", () => browse(Number($("pairIndex").value) - 1));
+    $("datasetEvaluate").addEventListener("click", () => change("/drop/api/ndvi/evaluate", {}));
+    $("datasetExport").addEventListener("click", () => change("/drop/api/ndvi/export", {}));
+    sources().then(() => poll(async () => {
+      const r = await api("/drop/api/ndvi/input");
+      if (r.ok && !pending) fill(r.input);
+    }, 1000));
+  }
+
   // ------------------------------------------------------------------ image metadata panel
   function imageMetaPanel() {
     const root = $("imageMeta");
@@ -467,7 +565,7 @@ const Drop = (() => {
     function value(key, r) {
       const [role, k] = key.split(".");
       const md = r[role] || {};
-      const cam = cams && cams[role];
+      const cam = r.input_mode === "recorded" ? null : cams && cams[role];
       const f = r.frame;
       switch (k || key) {
         case "model": return cam ? `#${cam.num} ${cam.model || ""}` : "–";
@@ -482,14 +580,17 @@ const Drop = (() => {
         case "FrameDuration": return isNum(md.FrameDuration) ? `${(1e6 / md.FrameDuration).toFixed(1)} fps (${(md.FrameDuration / 1000).toFixed(1)} ms)` : "–";
         case "flip": return cam ? [cam.hflip && "H", cam.vflip && "V"].filter(Boolean).join(" + ") || "none" : "–";
         case "sync": return isNum(r.sync_ms) ? `${fmt(r.sync_ms, 1)} ms between IR and RED` : "–";
-        case "captured": return f ? `${new Date(f.captured * 1000).toLocaleString()} (${age(f.age_s)})` : "–";
+        case "captured": return r.input_mode === "recorded" ? "Recorded file (capture timestamp unavailable)" :
+          f ? `${new Date(f.captured * 1000).toLocaleString()} (${age(f.age_s)})` : "–";
         case "position": {
+          if (r.input_mode === "recorded") return "Recorded capture location unavailable";
           const l = field && field.location;
           if (!l) return "no fix";
           const alt = isNum(l.elevation) ? ` · ${l.elevation.toFixed(0)} m` : "";
           return `${l.latitude.toFixed(6)}, ${l.longitude.toFixed(6)}${alt} (${l.source})`;
         }
         case "gps": {
+          if (r.input_mode === "recorded") return "Live GPS is not associated with recorded captures";
           const g = field && field.gps;
           if (!g) return "–";
           if (!g.available) return g.error || "not available";

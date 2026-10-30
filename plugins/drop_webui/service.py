@@ -27,6 +27,7 @@ from irrigation import calculate_irrigation
 
 from . import camera_io, render
 from .field_env import FieldEnvironment
+from .recorded import RecordedData
 
 IDLE_TIMEOUT_S = 10.0
 
@@ -151,6 +152,9 @@ class DropService:
         self.model_rev = {"ndvi": 0, "calib": 0}
         self.status = ""
         self.calib = None
+        self.input_mode = "live"
+        self.recorded_display_rev = None
+        self.recorded = RecordedData(self, repo or os.path.dirname(data_dir))
         self._apply_camera_extras()
         self.env = FieldEnvironment(repo or os.path.dirname(data_dir), data_dir, self._on_weather)
         if self.settings["eto_from_weather"]:
@@ -221,6 +225,8 @@ class DropService:
                 "stream": stream}
 
     def metadata(self, role):
+        if self.input_mode == "recorded":
+            return {}
         cam = self.cam(role)
         if cam is None:
             return None
@@ -232,6 +238,7 @@ class DropService:
         return {k: _num(md[k]) for k in METADATA_KEYS if k in md}
 
     def set_control(self, role, key, value):
+        self.require_live()
         applied = {}
         for r in self.roles(role):
             cam = self.cam(r)
@@ -313,21 +320,27 @@ class DropService:
     def _run(self):
         while time.time() - self.last_client < IDLE_TIMEOUT_S:
             t0 = time.time()
-            if self.paused:
+            if self.paused or self.input_mode == "recorded":
                 time.sleep(0.1)
                 continue
             cam_ir, cam_red = self.cam("ir"), self.cam("red")
             if cam_ir is None or cam_red is None:
-                self.status = "IR/RED camera not found — check the camera numbers in the settings"
+                with self.lock:
+                    if self.input_mode == "live":
+                        self.status = "IR/RED camera not found — check the camera numbers in the settings"
                 time.sleep(1)
                 continue
             ir, red = camera_io.grab_pair(cam_ir, cam_red)
             if ir is None or red is None:
-                self.status = "waiting for the cameras…"
+                with self.lock:
+                    if self.input_mode == "live":
+                        self.status = "waiting for the cameras…"
                 time.sleep(0.2)
                 continue
-            self.status = ""
-            self._publish(ir, red)
+            with self.lock:
+                if self.input_mode == "live":
+                    self.status = ""
+                    self._publish(ir, red)
             time.sleep(max(0.0, 1.0 / float(self.settings["fps"]) - (time.time() - t0)))
 
     def _publish(self, ir, red):
@@ -349,6 +362,7 @@ class DropService:
 
     def wait_frame(self, after_id, timeout=5.0):
         self.touch()
+        self._refresh_recorded()
         with self.frame_cond:
             self.frame_cond.wait_for(lambda: self.frame_id > after_id, timeout=timeout)
             return self.frame
@@ -356,10 +370,25 @@ class DropService:
     def fresh(self, max_age=1.0, timeout=3.0):
         """Latest frame, waiting for a new one if the current is stale (e.g. worker was idle)."""
         self.touch()
+        if self.input_mode == "recorded":
+            self._refresh_recorded()
+            return self.frame
         f = self.frame
         if f is None or time.time() - f["t"] > max_age:
             f = self.wait_frame(self.frame_id, timeout)
         return f
+
+    def _refresh_recorded(self):
+        if self.input_mode != "recorded" or self.frame is None:
+            return
+        with self.lock:
+            revision = (self.settings.rev, self.model_rev["ndvi"], self.model_rev["calib"])
+            if revision != self.recorded_display_rev:
+                self.recorded_display_rev = revision
+                with self.frame_cond:
+                    self.frame_id += 1
+                    self.frame["id"] = self.frame_id
+                    self.frame_cond.notify_all()
 
     # ------------------------------------------------------------------ models
 
@@ -585,6 +614,9 @@ class DropService:
     def auto_offset(self, key="ndvi", samples=5, timeout=20.0):
         """Measures the residual on a few frames and adds it to the model offset."""
         k = self.model_key(key)
+        recorded = self.input_mode == "recorded"
+        if recorded:
+            samples = 1
         found, fid, t_end = [], 0, time.time() + timeout
         while len(found) < samples and time.time() < t_end:
             frame = self.wait_frame(fid, timeout=3.0)
@@ -594,7 +626,7 @@ class DropService:
             r = self.residual(k)
             if r and r["tiles"] >= 3 and r["confidence"] >= 0.2 and math.isfinite(r["dx"]):
                 found.append((r["dx"], r["dy"]))
-        if len(found) < max(2, samples // 2):
+        if len(found) < (1 if recorded else max(2, samples // 2)):
             raise RuntimeError("not enough texture to measure the shift — point the cameras at the crop "
                                "(or a textured flat target) at the working distance")
         d = np.median(np.array(found), axis=0)
@@ -621,7 +653,12 @@ class DropService:
 
     # ------------------------------------------------------------------ snapshots
 
+    def require_live(self):
+        if self.input_mode != "live":
+            raise ValueError("This action requires live cameras; switch the input to Live cameras")
+
     def snapshot(self):
+        self.require_live()
         cam_ir, cam_red = self.cam("ir"), self.cam("red")
         ir, red = camera_io.grab_pair(cam_ir, cam_red, timeout=3.0)
         if ir is None or red is None:

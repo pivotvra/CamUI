@@ -49,6 +49,8 @@ def create_blueprint(svc):
 
     @bp.route("/calibration")
     def calibration_page():
+        if svc.input_mode != "live":
+            svc.recorded.select("live")
         svc.touch()
         return render_template("drop/calibration.html", active_page="drop_calibration",
                                min_pairs=calib_core.MIN_PAIRS, recommended_pairs=calib_core.RECOMMENDED_PAIRS,
@@ -100,7 +102,7 @@ def create_blueprint(svc):
                      "ir_size": list(f["ir_s"].shape[1::-1]), "red_size": list(f["red_s"].shape[1::-1]),
                      "ir_crop": list(f["ir"].crop), "red_crop": list(f["red"].crop)}
         return ok(ir=svc.metadata("ir"), red=svc.metadata("red"), frame=frame,
-                  sync_ms=f["sync_ms"] if f else None, status=svc.status)
+                  sync_ms=f["sync_ms"] if f else None, status=svc.status, input_mode=svc.input_mode)
 
     @bp.route("/api/camera/control", methods=["POST"])
     def camera_control():
@@ -112,23 +114,49 @@ def create_blueprint(svc):
 
     @bp.route("/api/camera/lock_exposure", methods=["POST"])
     def lock_exposure():
+        svc.require_live()
         return ok(locked=svc.lock_exposure(body().get("role", "both")))
 
     @bp.route("/api/camera/copy_exposure", methods=["POST"])
     def copy_exposure():
+        svc.require_live()
         return ok(values=svc.copy_exposure())
 
     @bp.route("/api/camera/save_profile", methods=["POST"])
     def save_camera_profile():
+        svc.require_live()
         b = body()
         return ok(saved=svc.save_camera_profile(b.get("role", "both"), b.get("name", "")))
 
     # ------------------------------------------------------------------ NDVI
 
+    @bp.route("/api/ndvi/input", methods=["GET", "POST"])
+    def ndvi_input():
+        if request.method == "POST":
+            b = body()
+            return ok(input=svc.recorded.select(b.get("mode"), b.get("source"), b.get("index", 0)))
+        return ok(input=svc.recorded.state())
+
+    @bp.route("/api/ndvi/datasets")
+    def ndvi_datasets():
+        return ok(sources=svc.recorded.sources())
+
+    @bp.route("/api/ndvi/evaluate", methods=["POST"])
+    def ndvi_evaluate():
+        return ok(input=svc.recorded.start_job())
+
+    @bp.route("/api/ndvi/export", methods=["POST"])
+    def ndvi_export():
+        return ok(input=svc.recorded.start_job(export=True))
+
     @bp.route("/api/ndvi/settings", methods=["GET", "POST"])
     def ndvi_settings():
         if request.method == "POST":
+            if svc.input_mode == "recorded" and "proc_width" in body():
+                svc.recorded._idle()
             changed = svc.settings.update(body())
+            if svc.input_mode == "recorded" and "proc_width" in changed:
+                svc.recorded.select("recorded", svc.recorded.source, svc.recorded.index)
             if changed.get("eto_from_weather"):
                 svc.env.start()
                 try:
@@ -246,6 +274,7 @@ def create_blueprint(svc):
 
     @bp.route("/api/calib/new", methods=["POST"])
     def calib_new():
+        svc.require_live()
         if svc.calib is not None:
             svc.calib.discard()
         svc.calib = CalibrationSession(svc, body())
@@ -253,6 +282,7 @@ def create_blueprint(svc):
 
     @bp.route("/api/calib/capture", methods=["POST"])
     def calib_capture():
+        svc.require_live()
         s = session()
         res = s.capture()
         return jsonify(dict(res, session=s.status())), (200 if res["ok"] else 422)

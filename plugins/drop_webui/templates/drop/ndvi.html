@@ -8,6 +8,40 @@
     <button class="btn btn-sm btn-outline-secondary" id="btnSnapshot" type="button" title="Save the current IR/RED pair (PNG) to data/snapshots">
       <i class="bi bi-camera"></i> Snapshot pair</button>
   </div>
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label small mb-0" for="inputMode">Input source</label>
+          <select class="form-select form-select-sm" id="inputMode">
+            <option value="live">Live cameras</option><option value="recorded">FieldData folder / ZIP</option>
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label small mb-0" for="datasetSelect">FieldData dataset</label>
+          <select class="form-select form-select-sm" id="datasetSelect"></select>
+        </div>
+        <div class="col-md-4 d-flex gap-1">
+          <button class="btn btn-sm btn-outline-secondary" id="datasetRefresh" type="button">Refresh</button>
+          <button class="btn btn-sm btn-primary" id="datasetLoad" type="button">Load dataset</button>
+        </div>
+      </div>
+      <div id="recordedControls" class="d-none mt-2">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <button class="btn btn-sm btn-outline-secondary" id="pairPrev" type="button">Previous</button>
+          <label class="small" for="pairIndex">Pair</label>
+          <input class="form-control form-control-sm drop-num" id="pairIndex" type="number" min="1" value="1">
+          <span class="small" id="pairTotal"></span>
+          <button class="btn btn-sm btn-outline-secondary" id="pairNext" type="button">Next</button>
+          <button class="btn btn-sm btn-outline-primary" id="datasetEvaluate" type="button">Evaluate dataset</button>
+          <button class="btn btn-sm btn-outline-success" id="datasetExport" type="button">Export good captures</button>
+        </div>
+        <div class="small mt-2 text-break" id="recordedPair"></div>
+        <div class="small mt-1 text-break" id="recordedJob" role="status"></div>
+        <div class="form-text">Quality uses the selected bands and calibration, original-pixel alignment thresholds, and session-relative blur checks. Saved images are assumed to be in sensor orientation with a full-sensor crop. Export copies originals unchanged to FieldData/exports; no capture timing or GPS is inferred.</div>
+      </div>
+    </div>
+  </div>
   <div class="row">
     <div class="col-xl-9">
       {% set model = 'ndvi' %}{% set default_view = 'ndvi' %}
