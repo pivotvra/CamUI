@@ -110,7 +110,7 @@ class RecordedData:
         else:
             raise ValueError("Dataset is not a folder or valid ZIP archive")
         if not pairs:
-            raise ValueError("No IR/RED captures found in this dataset")
+            raise ValueError(f"No IR/RED captures found in {path} (including all subfolders)")
         return [(session, stem, refs) for (session, stem), refs in sorted(pairs.items())]
 
     @staticmethod
@@ -140,7 +140,7 @@ class RecordedData:
             raise ValueError(f"Size mismatch: IR {ir.size} vs RED {red.size}")
         return ir, red
 
-    def select(self, mode, source=None, index=0):
+    def select(self, mode, source=None, index=0, *, reload=False):
         if mode not in ("live", "recorded"):
             raise ValueError("Input mode must be live or recorded")
         with self.service.lock, self.lock:
@@ -150,7 +150,8 @@ class RecordedData:
                 self.service.frame = None
                 self.service.status = ""
             else:
-                pairs = self._discover(source) if source != self.source else self.pairs
+                rescan = reload or source != self.source
+                pairs = self._discover(source) if rescan else self.pairs
                 if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(pairs):
                     raise ValueError("Pair index is out of range")
                 error = None
@@ -158,7 +159,7 @@ class RecordedData:
                     ir, red = self._frames(pairs[index][2])
                 except (OSError, ValueError, cv2.error, zipfile.BadZipFile, KeyError) as exc:
                     error = str(exc)
-                if source != self.source:
+                if rescan:
                     self.rows, self.signature = [], None
                     self.job = {"running": False, "done": 0, "total": 0, "error": None, "export": None}
                 self.source, self.pairs, self.index = source, pairs, index

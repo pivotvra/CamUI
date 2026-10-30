@@ -494,6 +494,7 @@ const Drop = (() => {
     async function sources() {
       const r = await api("/drop/api/ndvi/datasets");
       if (!r.ok) return report(r);
+      $("datasetRoot").textContent = `Scanning: ${r.root} (including all subfolders)`;
       const sel = $("datasetSelect");
       const previous = sel.value;
       sel.replaceChildren();
@@ -524,7 +525,7 @@ const Drop = (() => {
     }
     $("inputMode").addEventListener("change", () => {
       if ($("inputMode").value === "live") change("/drop/api/ndvi/input", { mode: "live" });
-      else if ($("datasetSelect").value) change("/drop/api/ndvi/input", { mode: "recorded", source: $("datasetSelect").value });
+      else if ($("datasetSelect").value) change("/drop/api/ndvi/input", { mode: "recorded", source: $("datasetSelect").value, reload: true });
       else {
         if (state) fill(state);
         toast("Add a folder or ZIP archive under FieldData first", "warning");
@@ -532,7 +533,7 @@ const Drop = (() => {
     });
     $("datasetRefresh").addEventListener("click", sources);
     $("datasetLoad").addEventListener("click", () => change("/drop/api/ndvi/input", {
-      mode: "recorded", source: $("datasetSelect").value,
+      mode: "recorded", source: $("datasetSelect").value, reload: true,
     }));
     const browse = (index) => state && change("/drop/api/ndvi/input", { mode: "recorded", source: state.source, index });
     $("pairPrev").addEventListener("click", () => browse(state.index - 1));

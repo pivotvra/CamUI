@@ -279,6 +279,67 @@ class RecordedTests(unittest.TestCase):
             self.assertEqual((output / "good/session" / f"capture_{role}.png").read_bytes(), data)
         self.assertEqual(self.load(".", 0)["total"], 9)
 
+    def test_all_subfolders_are_discovered_at_any_depth(self):
+        nested = self.dataset / "day/field/captures"
+        self.pair("nested", self.image, nested)
+        archives = self.dataset / "day/field/archives/parts"
+        archives.mkdir(parents=True)
+        for role in ("ir", "red"):
+            with zipfile.ZipFile(archives / f"{role}.zip", "w") as archive:
+                archive.writestr(f"inner/session/zipped_{role}.png", self.png(self.image))
+        self.pair("exported", self.image, self.dataset / "exports/previous")
+
+        sources = {s["path"] for s in self.recorded.sources()}
+        self.assertIn("session/day/field/captures", sources)
+        self.assertIn("session/day/field/archives/parts/ir.zip", sources)
+        self.assertNotIn("session/exports/previous", sources)
+        for source, prefix in (("session", ""), (".", "session/")):
+            pairs = self.recorded._discover(source)
+            self.assertEqual(len(pairs), 10)
+            indexed = {(session, stem): refs for session, stem, refs in pairs}
+            for session, stem in (
+                ("day/field/captures", "nested"),
+                ("day/field/archives/parts/inner/session", "zipped"),
+            ):
+                refs = indexed[(prefix + session, stem)]
+                self.assertEqual(set(refs), {"ir", "red"})
+                ir, red = self.recorded._frames(refs)
+                np.testing.assert_array_equal(ir.bgr, self.image)
+                np.testing.assert_array_equal(red.bgr, self.image)
+            self.assertFalse(any(stem == "exported" for _, stem, _ in pairs))
+
+    def test_drop_storage_timestamped_capture_names(self):
+        folder = self.field / "drop_storage/2026-06-30_15-39-35"
+        stems = [
+            "frame_15-39-37_170", "frame_15-39-39_170", "frame_15-39-39_264",
+            "frame_15-39-41_359", "frame_15-39-42_453", "frame_15-39-43_548",
+            "frame_15-39-44_642", "frame_15-39-45_737", "frame_15-39-46_831",
+        ]
+        for stem in stems:
+            for role in ("ir", "red"):
+                path = folder / f"{stem}_{role}.png"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(self.png(self.image))
+        state = self.load("drop_storage", 0)
+        self.assertEqual(state["total"], 9)
+        self.assertEqual(state["pair"]["session"], "2026-06-30_15-39-35")
+        self.assertEqual(state["pair"]["stem"], stems[0])
+        self.post("evaluate")
+        self.assertEqual(self.finish_job()["good"], 9)
+
+    def test_load_dataset_rescans_same_folder(self):
+        self.load()
+        self.pair("new_capture", self.image, self.dataset / "new/subfolder")
+        state = self.post("input", {
+            "mode": "recorded", "source": "session", "reload": True,
+        })["input"]
+        self.assertEqual(state["total"], 9)
+        self.assertFalse(state["evaluated"])
+
+    def test_dataset_list_reports_absolute_scan_root(self):
+        response = self.client.get("/drop/api/ndvi/datasets").get_json()
+        self.assertEqual(response["root"], str(self.field.resolve()))
+
 
 if __name__ == "__main__":
     unittest.main()

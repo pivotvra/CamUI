@@ -134,12 +134,13 @@ def create_blueprint(svc):
     def ndvi_input():
         if request.method == "POST":
             b = body()
-            return ok(input=svc.recorded.select(b.get("mode"), b.get("source"), b.get("index", 0)))
+            return ok(input=svc.recorded.select(b.get("mode"), b.get("source"), b.get("index", 0),
+                                                reload=b.get("reload") is True))
         return ok(input=svc.recorded.state())
 
     @bp.route("/api/ndvi/datasets")
     def ndvi_datasets():
-        return ok(sources=svc.recorded.sources())
+        return ok(sources=svc.recorded.sources(), root=str(svc.recorded.root))
 
     @bp.route("/api/ndvi/evaluate", methods=["POST"])
     def ndvi_evaluate():
