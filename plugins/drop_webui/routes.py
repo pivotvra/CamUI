@@ -135,12 +135,22 @@ def create_blueprint(svc):
         if request.method == "POST":
             b = body()
             return ok(input=svc.recorded.select(b.get("mode"), b.get("source"), b.get("index", 0),
-                                                reload=b.get("reload") is True))
+                                                reload=b.get("reload") is True, recursive=b.get("recursive"),
+                                                crop_mode=b.get("crop_mode")))
         return ok(input=svc.recorded.state())
 
     @bp.route("/api/ndvi/datasets")
     def ndvi_datasets():
-        return ok(sources=svc.recorded.sources(), root=str(svc.recorded.root))
+        sources = svc.recorded.sources()
+        return ok(sources=sources, root=str(svc.recorded.root), warnings=svc.recorded.scan_warnings)
+
+    @bp.route("/api/ndvi/upload", methods=["POST"])
+    def ndvi_upload():
+        svc.recorded._idle()
+        request.max_form_parts = 20000
+        if request.content_length and request.content_length > 2 * 1024 ** 3:
+            return fail("Upload exceeds the 2 GiB limit; upload smaller batches", 413)
+        return ok(source=svc.recorded.upload(request.files.getlist("files")))
 
     @bp.route("/api/ndvi/evaluate", methods=["POST"])
     def ndvi_evaluate():
@@ -149,6 +159,12 @@ def create_blueprint(svc):
     @bp.route("/api/ndvi/export", methods=["POST"])
     def ndvi_export():
         return ok(input=svc.recorded.start_job(export=True))
+
+    @bp.route("/api/ndvi/cleanup", methods=["POST"])
+    def ndvi_cleanup():
+        if body().get("confirm") is not True:
+            return fail("Confirm moving evaluated bad captures into quarantine")
+        return ok(input=svc.recorded.start_cleanup())
 
     @bp.route("/api/ndvi/settings", methods=["GET", "POST"])
     def ndvi_settings():

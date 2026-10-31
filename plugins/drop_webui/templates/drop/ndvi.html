@@ -18,7 +18,7 @@
           </select>
         </div>
         <div class="col-md-5">
-          <label class="form-label small mb-0" for="datasetSelect">FieldData dataset</label>
+          <label class="form-label small mb-0" for="datasetSelect">Folder / ZIP inside FieldData</label>
           <select class="form-select form-select-sm" id="datasetSelect"></select>
         </div>
         <div class="col-md-4 d-flex gap-1">
@@ -26,10 +26,29 @@
           <button class="btn btn-sm btn-primary" id="datasetLoad" type="button">Load dataset</button>
         </div>
       </div>
-      <div class="form-text">Folders include all subfolders and their ZIP archives, at any depth. Choose the all-folders dataset to scan all of FieldData. Generated exports are excluded.</div>
+      <div class="d-flex flex-wrap gap-3 align-items-center mt-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="includeSubdirectories" checked>
+          <label class="form-check-label small" for="includeSubdirectories">Include subdirectories</label>
+        </div>
+        <div>
+          <label class="small" for="recordedCrop">Recorded capture crop</label>
+          <select class="form-select form-select-sm" id="recordedCrop">
+            <option value="full">Full sensor</option>
+            <option value="profile">Use active calibration's capture crops</option>
+          </select>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" id="uploadZip" type="button">Upload ZIP</button>
+        <button class="btn btn-sm btn-outline-primary" id="uploadFolder" type="button">Upload folder</button>
+        <input type="file" id="zipFiles" accept=".zip" multiple hidden>
+        <input type="file" id="folderFiles" webkitdirectory multiple hidden>
+        <span class="small" id="uploadStatus" role="status"></span>
+      </div>
+      <div class="form-text">Load dataset applies the selected folder and subdirectory option. ZIPs follow the same option for their internal folders. Uploads create a new dataset (maximum 2 GiB per upload). Generated exports are excluded.</div>
       <div class="form-text text-break" id="datasetRoot" role="status"></div>
       <div id="recordedControls" class="d-none mt-2">
         <div class="d-flex flex-wrap gap-2 align-items-center">
+          <button class="btn btn-sm btn-outline-primary" id="replayToggle" type="button">Play</button>
           <button class="btn btn-sm btn-outline-secondary" id="pairPrev" type="button">Previous</button>
           <label class="small" for="pairIndex">Pair</label>
           <input class="form-control form-control-sm drop-num" id="pairIndex" type="number" min="1" value="1">
@@ -37,10 +56,13 @@
           <button class="btn btn-sm btn-outline-secondary" id="pairNext" type="button">Next</button>
           <button class="btn btn-sm btn-outline-primary" id="datasetEvaluate" type="button">Evaluate dataset</button>
           <button class="btn btn-sm btn-outline-success" id="datasetExport" type="button">Export good captures</button>
+          <button class="btn btn-sm btn-outline-danger" id="datasetCleanup" type="button">Cleanup bad captures</button>
         </div>
         <div class="small mt-2 text-break" id="recordedPair"></div>
         <div class="small mt-1 text-break" id="recordedJob" role="status"></div>
-        <div class="form-text">Quality uses the selected bands and calibration, original-pixel alignment thresholds, and session-relative blur checks. Saved images are assumed to be in sensor orientation with a full-sensor crop. Export copies originals unchanged to FieldData/exports; no capture timing or GPS is inferred.</div>
+        <div class="small mt-1 text-break" id="evaluationReasons"></div>
+        <div class="form-text">Evaluation publishes verdicts after each folder so session-relative blur checks remain valid. Replay works during evaluation. Cleanup requires confirmation after evaluation and moves unchanged bad files to recoverable quarantine, with a restore manifest; ZIP members are skipped.</div>
+        <div class="form-text">Quality uses the selected bands, active calibration and recorded capture crop, original-pixel alignment thresholds, and session-relative blur checks. Use the calibration and crop from the recording session, not a close-range bench calibration. Images retain their stored orientation. Export copies originals unchanged to FieldData/exports; no capture timing or GPS is inferred.</div>
       </div>
     </div>
   </div>

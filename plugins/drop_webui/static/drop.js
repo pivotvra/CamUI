@@ -458,26 +458,42 @@ const Drop = (() => {
   function recordedPanel() {
     let state = null;
     let pending = false;
+    let playing = false;
+    let replayTimer = null;
+    function stopReplay() {
+      playing = false;
+      clearTimeout(replayTimer);
+      $("replayToggle").textContent = "Play";
+    }
     function fill(s) {
       const sourceChanged = !state || state.source !== s.source;
       state = s;
       const recorded = s.mode === "recorded";
       const running = s.job.running || pending;
+      const browsingLocked = pending || (s.job.running && s.job.kind !== "evaluate");
+      if (!recorded || (s.job.running && s.job.kind !== "evaluate")) stopReplay();
       $("inputMode").value = s.mode;
-      if (s.source && sourceChanged) $("datasetSelect").value = s.source;
+      if (s.source && sourceChanged) {
+        $("datasetSelect").value = s.source;
+        $("includeSubdirectories").checked = s.recursive;
+        $("recordedCrop").value = s.crop_mode;
+      }
       $("recordedControls").classList.toggle("d-none", !recorded);
       $("inputMode").disabled = running;
       $("datasetLoad").disabled = running || !$("datasetSelect").value;
       $("datasetSelect").disabled = running;
       $("datasetRefresh").disabled = running;
-      $("pairPrev").disabled = running || s.index <= 0;
-      $("pairNext").disabled = running || s.index >= s.total - 1;
-      $("pairIndex").disabled = running;
+      for (const id of ["includeSubdirectories", "recordedCrop", "uploadZip", "uploadFolder"]) $(id).disabled = running;
+      $("replayToggle").disabled = browsingLocked || !s.total;
+      $("pairPrev").disabled = browsingLocked || s.index <= 0;
+      $("pairNext").disabled = browsingLocked || s.index >= s.total - 1;
+      $("pairIndex").disabled = browsingLocked;
       $("pairIndex").max = s.total;
       setVal($("pairIndex"), s.index + 1);
       $("pairTotal").textContent = `of ${s.total}`;
       $("datasetEvaluate").disabled = running;
       $("datasetExport").disabled = running || !s.evaluated || !s.good;
+      $("datasetCleanup").disabled = running || !s.evaluated || !s.bad;
       $("btnSnapshot").disabled = recorded;
       document.querySelectorAll("#cameraPanel input, #cameraPanel select, #cameraPanel button, [data-set='ir_cam'], [data-set='red_cam']").forEach((el) => {
         el.disabled = recorded;
@@ -486,22 +502,27 @@ const Drop = (() => {
       $("recordedPair").textContent = s.pair ?
         `${s.pair.session} / ${s.pair.stem} — ${s.verdict || "not evaluated"}${s.reasons ? ": " + s.reasons : ""}` : "";
       $("recordedJob").textContent = s.job.error ? `Failed: ${s.job.error}` :
-        s.job.running ? `Processing ${s.job.done} / ${s.job.total} pairs...` :
+        s.job.running ? `${s.job.kind}: ${s.job.done} / ${s.job.total} pairs` +
+          (s.job.kind === "evaluate" ? ` · folders ${s.job.folders_done}/${s.job.folders_total} · ${s.job.folder || ""} · ${s.good} good, ${s.bad} bad so far. Replay remains available.` : "") :
+        s.job.quarantine ? `Cleanup complete: ${s.job.moved} files moved to ${s.job.quarantine}; ${s.job.skipped_pairs} pairs skipped (archived or unavailable). Reload the dataset to refresh its file list.` :
         s.job.export ? `Export complete: ${s.job.export} (${s.good} good pairs). Report: report.csv` :
-        s.evaluated ? `${s.good} good, ${s.bad} bad. Originals are exported without re-encoding.` :
+        s.evaluated ? `${s.good} good, ${s.bad} bad. Evaluated with ${s.evaluation.model.describe}; crop: ${s.crop_mode}.` :
         "Evaluate the dataset before exporting. Changing bands or calibration requires re-evaluation.";
+      $("evaluationReasons").textContent = Object.entries(s.reason_counts)
+        .sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${reason}: ${count}`).join(" · ");
     }
     async function sources() {
       const r = await api("/drop/api/ndvi/datasets");
       if (!r.ok) return report(r);
-      $("datasetRoot").textContent = `Scanning: ${r.root} (including all subfolders)`;
+      $("datasetRoot").textContent = `FieldData location: ${r.root}` +
+        (r.warnings && r.warnings.length ? ` — ${r.warnings.join("; ")}` : "");
       const sel = $("datasetSelect");
       const previous = sel.value;
       sel.replaceChildren();
       for (const source of r.sources) {
         const opt = document.createElement("option");
         opt.value = source.path;
-        opt.textContent = source.path === "." ? "FieldData — all folders and ZIPs" : `${source.path} (${source.kind})`;
+        opt.textContent = source.path === "." ? "FieldData root" : `${source.path} (${source.kind})`;
         sel.appendChild(opt);
       }
       if ([...sel.options].some((o) => o.value === previous)) sel.value = previous;
@@ -521,26 +542,88 @@ const Drop = (() => {
       pending = false;
       report(r);
       if (r.ok) fill(r.input);
-      else if (state) fill(state);
+      else {
+        stopReplay();
+        if (state) fill(state);
+      }
+      return r;
     }
     $("inputMode").addEventListener("change", () => {
+      stopReplay();
       if ($("inputMode").value === "live") change("/drop/api/ndvi/input", { mode: "live" });
-      else if ($("datasetSelect").value) change("/drop/api/ndvi/input", { mode: "recorded", source: $("datasetSelect").value, reload: true });
+      else if ($("datasetSelect").value) change("/drop/api/ndvi/input", { mode: "recorded", source: $("datasetSelect").value, reload: true, recursive: $("includeSubdirectories").checked, crop_mode: $("recordedCrop").value });
       else {
         if (state) fill(state);
         toast("Add a folder or ZIP archive under FieldData first", "warning");
       }
     });
     $("datasetRefresh").addEventListener("click", sources);
-    $("datasetLoad").addEventListener("click", () => change("/drop/api/ndvi/input", {
-      mode: "recorded", source: $("datasetSelect").value, reload: true,
-    }));
+    $("datasetLoad").addEventListener("click", () => {
+      stopReplay();
+      change("/drop/api/ndvi/input", {
+        mode: "recorded", source: $("datasetSelect").value, reload: true,
+        recursive: $("includeSubdirectories").checked,
+        crop_mode: $("recordedCrop").value,
+      });
+    });
     const browse = (index) => state && change("/drop/api/ndvi/input", { mode: "recorded", source: state.source, index });
-    $("pairPrev").addEventListener("click", () => browse(state.index - 1));
-    $("pairNext").addEventListener("click", () => browse(state.index + 1));
-    $("pairIndex").addEventListener("change", () => browse(Number($("pairIndex").value) - 1));
-    $("datasetEvaluate").addEventListener("click", () => change("/drop/api/ndvi/evaluate", {}));
-    $("datasetExport").addEventListener("click", () => change("/drop/api/ndvi/export", {}));
+    $("pairPrev").addEventListener("click", () => { stopReplay(); browse(state.index - 1); });
+    $("pairNext").addEventListener("click", () => { stopReplay(); browse(state.index + 1); });
+    $("pairIndex").addEventListener("change", () => { stopReplay(); browse(Number($("pairIndex").value) - 1); });
+    $("datasetEvaluate").addEventListener("click", () => { stopReplay(); change("/drop/api/ndvi/evaluate", {}); });
+    $("datasetExport").addEventListener("click", () => { stopReplay(); change("/drop/api/ndvi/export", {}); });
+    $("datasetCleanup").addEventListener("click", () => {
+      stopReplay();
+      if (confirm(`Move evaluated bad captures (${state.bad} pairs) to recoverable quarantine? Good captures stay untouched. ZIP members are skipped. A restore manifest is saved.`)) {
+        change("/drop/api/ndvi/cleanup", { confirm: true });
+      }
+    });
+    $("replayToggle").addEventListener("click", async () => {
+      if (playing) return stopReplay();
+      playing = true;
+      $("replayToggle").textContent = "Pause";
+      const step = async () => {
+        if (!playing || document.hidden) return stopReplay();
+        if (!state || state.mode !== "recorded" || (state.job.running && state.job.kind !== "evaluate")) return stopReplay();
+        if (!pending) {
+          if (state.index >= state.total - 1) return stopReplay();
+          await browse(state.index + 1);
+        }
+        if (playing) replayTimer = setTimeout(step, 1000);
+      };
+      if (state.index >= state.total - 1) await browse(0);
+      if (playing) replayTimer = setTimeout(step, 1000);
+    });
+    $("uploadZip").addEventListener("click", () => $("zipFiles").click());
+    $("uploadFolder").addEventListener("click", () => $("folderFiles").click());
+    async function upload(event) {
+      const input = event.target;
+      if (!input.files.length || pending) return;
+      stopReplay();
+      pending = true;
+      if (state) fill(state);
+      $("uploadStatus").textContent = "Uploading...";
+      try {
+        const data = new FormData();
+        for (const file of input.files) data.append("files", file, file.webkitRelativePath || file.name);
+        const response = await fetch("/drop/api/ndvi/upload", { method: "POST", body: data });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.message || `Upload failed (${response.status})`);
+        await sources();
+        $("datasetSelect").value = result.source;
+        $("includeSubdirectories").checked = true;
+        $("uploadStatus").textContent = "Uploaded. Click Load dataset to browse.";
+      } catch (error) {
+        $("uploadStatus").textContent = `Upload failed: ${error.message}`;
+        toast(error.message, "danger");
+      } finally {
+        pending = false;
+        input.value = "";
+        if (state) fill(state);
+      }
+    }
+    $("zipFiles").addEventListener("change", upload);
+    $("folderFiles").addEventListener("change", upload);
     sources().then(() => poll(async () => {
       const r = await api("/drop/api/ndvi/input");
       if (r.ok && !pending) fill(r.input);

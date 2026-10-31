@@ -50,6 +50,7 @@ DEFAULT_SETTINGS = {
     "eto_from_weather": False,  # keep eto synced to today's Open-Meteo FAO-56 ET0
     "proc_width": 820,
     "fps": 3.0,
+    "recorded_crop": "full",
     "camera_extras": {},        # per camera number: controls CamUI profiles cannot store (ColourGains)
 }
 
@@ -59,7 +60,8 @@ LIMITS = {
     "mask_end": (0.0, 1.0), "n_zones": (1, 20), "eto": (0.0, 20.0),
     "proc_width": (320, 1640), "fps": (0.5, 10.0), "ir_cam": (0, 7), "red_cam": (0, 7),
 }
-CHOICES = {"ir_band": ("gray", "r", "g", "b"), "red_band": ("r", "g", "b", "gray")}
+CHOICES = {"ir_band": ("gray", "r", "g", "b"), "red_band": ("r", "g", "b", "gray"),
+           "recorded_crop": ("full", "profile")}
 
 CONTROL_TYPES = {"AeEnable": int, "AwbEnable": int, "ExposureTime": int,
                  "AnalogueGain": float, "ExposureValue": float}
@@ -385,6 +387,8 @@ class DropService:
             revision = (self.settings.rev, self.model_rev["ndvi"], self.model_rev["calib"])
             if revision != self.recorded_display_rev:
                 self.recorded_display_rev = revision
+                for role in ("ir", "red"):
+                    self.frame[role].crop = self.recorded.crop(role, self.model("ndvi"))
                 with self.frame_cond:
                     self.frame_id += 1
                     self.frame["id"] = self.frame_id

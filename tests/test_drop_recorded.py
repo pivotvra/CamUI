@@ -3,6 +3,7 @@ import io
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,7 @@ REPO = CAMUI.parent
 sys.path[:0] = [str(CAMUI / "plugins"), str(REPO / "Claude_xaris"), str(REPO / "calibration")]
 
 import frame_quality
+import alignment
 from drop_webui.routes import create_blueprint
 from drop_webui.service import DropService
 
@@ -339,6 +341,234 @@ class RecordedTests(unittest.TestCase):
     def test_dataset_list_reports_absolute_scan_root(self):
         response = self.client.get("/drop/api/ndvi/datasets").get_json()
         self.assertEqual(response["root"], str(self.field.resolve()))
+
+    def test_external_storage_symlink_and_directory_loop(self):
+        external = self.repo / "mounted_storage"
+        session = external / "2026-06-30_15-39-35"
+        session.mkdir(parents=True)
+        for role in ("ir", "red"):
+            (session / f"frame_15-39-37_170_{role}.png").write_bytes(self.png(self.image))
+        (self.field / "drop_storage").symlink_to(external, target_is_directory=True)
+        (session / "loop").symlink_to(external, target_is_directory=True)
+        sources = {s["path"] for s in self.recorded.sources()}
+        self.assertIn("drop_storage/2026-06-30_15-39-35", sources)
+        self.assertFalse(any("loop" in s for s in sources))
+        self.assertEqual(self.load("drop_storage", 0)["total"], 1)
+        self.assertIsNotNone(self.svc.frame)
+        self.post("evaluate")
+        self.assertEqual(self.finish_job()["good"], 1)
+        self.post("export")
+        output = Path(self.finish_job()["job"]["export"])
+        self.assertEqual(
+            (output / "good/2026-06-30_15-39-35/frame_15-39-37_170_ir.png").read_bytes(),
+            self.png(self.image),
+        )
+        self.assertEqual(self.load(".", 0)["total"], 9)
+        self.post("input", {"mode": "recorded", "source": "../mounted_storage"}, status=400)
+
+    def test_selected_folder_without_subdirectories(self):
+        self.pair("nested", self.image, self.dataset / "nested")
+        state = self.post("input", {"mode": "recorded", "source": "session", "recursive": False})["input"]
+        self.assertEqual(state["total"], 8)
+        self.assertFalse(state["recursive"])
+        state = self.post("input", {"mode": "recorded", "source": "session", "recursive": True})["input"]
+        self.assertEqual(state["total"], 9)
+        self.assertTrue(state["recursive"])
+        self.post("input", {"mode": "recorded", "source": "session", "recursive": "false"}, status=400)
+
+    def test_zip_without_subdirectories(self):
+        path = self.field / "nested.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for prefix in ("", "child/"):
+                for role in ("ir", "red"):
+                    archive.writestr(f"{prefix}frame_{role}.png", self.png(self.image))
+        state = self.post("input", {"mode": "recorded", "source": "nested.zip", "recursive": False})["input"]
+        self.assertEqual(state["total"], 1)
+        self.assertEqual(self.load("nested.zip", 0)["total"], 1)
+
+    def test_upload_folder_preserves_relative_paths_and_originals(self):
+        data = {"files": [
+            (io.BytesIO(self.png(self.image)), f"captures/session/frame_{role}.png")
+            for role in ("ir", "red")
+        ]}
+        response = self.client.post("/drop/api/ndvi/upload", data=data, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        source = response.get_json()["source"]
+        self.assertTrue(source.startswith("upload-"))
+        for role in ("ir", "red"):
+            self.assertEqual((self.field / source / f"captures/session/frame_{role}.png").read_bytes(),
+                             self.png(self.image))
+        self.assertEqual(self.load(source, 0)["total"], 1)
+
+    def test_upload_zip_and_reject_invalid_paths(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for role in ("ir", "red"):
+                archive.writestr(f"session/frame_{role}.png", self.png(self.image))
+        response = self.client.post("/drop/api/ndvi/upload", data={
+            "files": (io.BytesIO(buffer.getvalue()), "captures.zip"),
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.load(response.get_json()["source"], 0)["total"], 1)
+        for name, content in (("../outside.png", b"x"), ("/absolute.png", b"x"),
+                              ("bad.zip", b"not zip"), ("code.py", b"x")):
+            response = self.client.post("/drop/api/ndvi/upload", data={
+                "files": (io.BytesIO(content), name),
+            })
+            self.assertEqual(response.status_code, 400, name)
+        self.assertEqual(len(list(self.field.glob("upload-*"))), 1)
+        unsafe = io.BytesIO()
+        with zipfile.ZipFile(unsafe, "w") as archive:
+            archive.writestr("../outside.png", b"x")
+        response = self.client.post("/drop/api/ndvi/upload", data={
+            "files": (io.BytesIO(unsafe.getvalue()), "unsafe.zip"),
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse((self.repo / "outside.png").exists())
+
+    def test_profile_crop_aligns_recorded_data_and_invalidates_verdicts(self):
+        crop = [0, 1232, 3280, 1232]
+        profile = {
+            "name": "recorded_field", "type": "homography",
+            "crop_ir": crop, "crop_red": crop, "offset_px": [0, 0],
+            "homography": {"image_size": [320, 240],
+                           "H": [[1, 0, 0], [0, 1, 24], [0, 0, 1]]},
+        }
+        red = cv2.warpAffine(self.image, np.float32([[1, 0, 0], [0, 1, 24]]), (320, 240))
+        shifted = self.dataset / "shifted_session"
+        shifted.mkdir()
+        (shifted / "shifted_ir.png").write_bytes(self.png(self.image))
+        (shifted / "shifted_red.png").write_bytes(self.png(red))
+        self.svc.set_model("ndvi", alignment.AlignmentModel(profile))
+        self.load()
+        self.post("evaluate")
+        self.finish_job()
+        before = next(r for r in self.recorded.rows if r["stem"] == "shifted")
+        self.assertIn("misaligned_shift", before["reasons"])
+        state = self.post("input", {
+            "mode": "recorded", "source": "session", "crop_mode": "profile",
+        })["input"]
+        self.assertFalse(state["evaluated"])
+        self.assertEqual(self.svc.frame["ir"].crop, tuple(crop))
+        self.assertEqual(self.svc.settings["recorded_crop"], "profile")
+        self.post("evaluate")
+        state = self.finish_job()
+        after = next(r for r in self.recorded.rows if r["stem"] == "shifted")
+        self.assertEqual(after["verdict"], "good", after["reasons"])
+        self.assertLess(after["align_shift_px"], frame_quality.Thresholds().max_shift_px)
+        self.assertEqual(state["evaluation"]["crop_mode"], "profile")
+        self.assertEqual(state["evaluation"]["crops"]["ir"], tuple(crop))
+        self.assertIn("ir_underexposed", state["reason_counts"])
+
+    def test_recorded_metrics_match_cli_at_original_resolution(self):
+        rng = np.random.default_rng(7)
+        image = rng.integers(30, 200, (900, 1200, 3), dtype=np.uint8)
+        warp = np.float32([[1, 0, 2.7], [0, 1, -3.2], [0, 0, 1]])
+        self.pair("large", image)
+        model = alignment.AlignmentModel({
+            "name": "same_warp", "type": "homography",
+            "crop_ir": list(alignment.full_crop()), "crop_red": list(alignment.full_crop()),
+            "offset_px": [0, 0],
+            "homography": {"image_size": [1200, 900], "H": warp.tolist()},
+        })
+        self.svc.set_model("ndvi", model)
+        self.load()
+        self.post("evaluate")
+        self.finish_job()
+        expected = frame_quality.evaluate_pair(image, image, warp)
+        actual = next(r for r in self.recorded.rows if r["stem"] == "large")
+        for key in ("ir_mean", "red_mean", "align_shift_px", "align_tile_spread_px", "align_confidence"):
+            self.assertAlmostEqual(actual[key], expected[key], places=4, msg=key)
+
+    def test_inaccessible_directory_is_reported_without_hiding_captures(self):
+        blocked = self.field / "unreadable"
+        blocked.mkdir()
+        original = Path.iterdir
+        def iterdir(path):
+            if path == blocked:
+                raise PermissionError("test permission denied")
+            return original(path)
+        with patch.object(Path, "iterdir", iterdir), self.assertWarns(RuntimeWarning):
+            response = self.client.get("/drop/api/ndvi/datasets").get_json()
+        self.assertTrue(response["ok"])
+        self.assertIn("session", {s["path"] for s in response["sources"]})
+        self.assertIn("test permission denied", response["warnings"][0])
+
+    def test_folder_results_and_browsing_available_during_evaluation(self):
+        self.pair("later", self.image, self.dataset / "later")
+        self.load()
+        release = threading.Event()
+        started = threading.Event()
+        original = self.recorded._score
+        def score(session, stem, refs, model, bands):
+            if session == "later":
+                started.set()
+                if not release.wait(10):
+                    raise RuntimeError("test timed out waiting for browsing")
+            return original(session, stem, refs, model, bands)
+        with patch.object(self.recorded, "_score", side_effect=score):
+            self.post("evaluate")
+            try:
+                self.assertTrue(started.wait(5))
+                state = self.recorded.state()
+                self.assertTrue(state["job"]["running"])
+                self.assertEqual(state["job"]["folders_done"], 1)
+                self.assertEqual(state["completed"], 8)
+                self.assertEqual((state["good"], state["bad"]), (5, 3))
+                state = self.load(index=8)
+                self.assertEqual(state["verdict"], "pending")
+                self.assertTrue(state["job"]["running"])
+                self.post("export", status=400)
+                self.post("cleanup", {"confirm": True}, status=400)
+            finally:
+                release.set()
+            state = self.finish_job()
+            self.assertEqual((state["good"], state["bad"]), (6, 3))
+            self.assertEqual(state["job"]["folders_done"], 2)
+
+    def test_cleanup_quarantines_only_bad_files_with_restore_manifest(self):
+        import json
+
+        archive = self.field / "archived.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            for role in ("ir", "red"):
+                z.writestr(f"zip_session/dark_{role}.png", self.png(np.zeros_like(self.image)))
+        self.load(".", 0)
+        self.post("evaluate")
+        self.finish_job()
+        self.post("cleanup", status=400)
+        self.post("cleanup", {"confirm": True})
+        state = self.finish_job()
+        folder = Path(state["job"]["quarantine"])
+        manifest = json.loads((folder / "manifest.json").read_text())
+        self.assertTrue(manifest["complete"])
+        self.assertEqual(state["job"]["moved"], 5)
+        self.assertEqual(state["job"]["skipped_pairs"], 1)
+        for entry in manifest["files"]:
+            self.assertTrue(entry["moved"])
+            self.assertFalse(Path(entry["source"]).exists())
+            self.assertTrue(Path(entry["destination"]).exists())
+        for name, data in self.originals.items():
+            if name.startswith("good_"):
+                self.assertEqual((self.dataset / name).read_bytes(), data)
+        self.assertTrue(archive.exists())
+        self.assertFalse(any("quarantine" in s["path"] for s in self.recorded.sources()))
+        self.post("input", {"mode": "recorded", "source": "quarantine"}, status=400)
+        self.assertEqual(self.recorded._discover("session")[0][1], "good_0")
+
+    def test_cleanup_stops_on_modified_bad_capture(self):
+        self.load()
+        self.post("evaluate")
+        self.finish_job()
+        path = self.dataset / "bad_dark_ir.png"
+        path.write_bytes(self.png(self.image))
+        self.post("cleanup", {"confirm": True})
+        deadline = time.monotonic() + 10
+        while self.recorded.state()["job"]["running"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertIn("Capture changed since evaluation", self.recorded.state()["job"]["error"])
+        self.assertEqual(path.read_bytes(), self.png(self.image))
+        self.assertTrue((self.dataset / "good_0_ir.png").exists())
 
 
 if __name__ == "__main__":
